@@ -10,6 +10,7 @@ from queue import Empty
 import logging
 from websockets.sync.client import connect
 import os
+from dotenv import load_dotenv
 
 # Configure logging
 logging.basicConfig(
@@ -21,6 +22,8 @@ logging.basicConfig(
     ]
 )
 logger = logging.getLogger(__name__)
+
+load_dotenv()
 
 def write_to_log(message: str) -> None:
     """Log messages to file and console with timestamp."""
