@@ -1,0 +1,176 @@
+import requests
+import json
+import serial
+import serial.tools.list_ports
+import time
+import datetime
+import multiprocessing
+from multiprocessing import Process, Queue
+from queue import Empty 
+import logging
+from websockets.sync.client import connect
+import os
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(processName)s - %(message)s',
+    handlers=[
+        logging.FileHandler(r"C:\Users\User\Desktop\pcLogs.txt"),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
+
+def write_to_log(message: str) -> None:
+    """Log messages to file and console with timestamp."""
+    logger.info(message)
+
+def get_reciever_token() -> str:
+    #send to endpoint, get token
+    password = os.getenv('PASSPHRASE')
+    url = os.getenv('MEERBY_LOGIN_URL')
+    payload = {'password': password}
+    
+    while True:
+        try:
+            response = requests.post(url, json=payload)
+            response.raise_for_status()
+            data = response.json()
+            if data.get('status') == 200:
+                write_to_log("Token Received")
+                return data['jwt']
+            write_to_log("Wrong Password when retrieving Token")
+            time.sleep(3)
+        except Exception as e:
+            write_to_log(f"Retrying to Receive Token: retrying in 3 sec .... Error: {e}")
+            time.sleep(3)
+
+def get_reciever_serial_port() -> serial.Serial:
+     #check if device is plugged
+    comPort = ""
+    while comPort == "":
+        ports = list(serial.tools.list_ports.comports())
+        write_to_log("List of serial Numbers found:")
+        for port in ports:
+            write_to_log(f"---- {port.serial_number}")
+            if port.serial_number == os.getenv('SOLT_RECIVER_SERIAL_ID'):
+                comPort = port.device
+                write_to_log(f"Receiver found on {comPort}")
+        if comPort == "":
+            write_to_log("Warning: Solt Device Not found. Please make sure it is plugged in")
+            time.sleep(3)
+    
+    try:
+        serialPort = serial.Serial(port=comPort, baudrate=9600, bytesize=8, timeout=1, stopbits=serial.STOPBITS_ONE)
+        return serialPort
+    except serial.SerialException as e:
+        write_to_log(f"Serial port error: {e}")
+        raise
+
+def producer(queue: Queue, token: str) -> None:
+    """Read beacon events from serial port and push to queue."""
+    write_to_log(f"Producer: Queue created")
+    while True:
+        try:
+            receiverPort = get_reciever_serial_port()
+            write_to_log("Producer started, reading from serial port")
+            while True:
+                try:
+                    if receiverPort.in_waiting > 0:
+                        serialString = receiverPort.readline()
+                        beaconId = str(serialString[4:10]).replace("b", "").replace("'", "")
+                        if beaconId:
+                            event = {'jwt': token, 'action': 'beacon_press', 'beacon_id': beaconId}
+                            queue.put(event)
+                            write_to_log(f"Produced event: {beaconId}")
+                except serial.SerialException as e:
+                    write_to_log(f"Serial error: {e}")
+                    receiverPort.close()
+                    break  # Reconnect to serial port
+                except Exception as e:
+                    write_to_log(f"Unexpected error in producer: {e}")
+                    time.sleep(1)
+        except Exception as e:
+            write_to_log(f"Producer failed to initialize: {e}")
+            time.sleep(3)
+
+def consumer(queue: Queue, websocket_url: str) -> None:
+    """Consume events from queue and send over WebSocket."""
+    write_to_log(f"Consumer: Queue created")
+    try:
+        if not isinstance(queue, multiprocessing.queues.Queue):
+            raise ValueError(f"Consumer: Expected multiprocessing.queues.Queue, got {type(queue)}")
+    except ValueError as e:
+        write_to_log(f"Consumer initialization error: {e}")
+        return
+
+    while True:
+        try:
+            with connect(websocket_url) as websocket:
+                write_to_log("Connection Successful!")
+                # Use a fresh token if queue is empty, else try to reuse one
+                try:
+                    token = queue.get(block=False).get('jwt') if not queue.empty() else get_reciever_token()
+                except Empty:
+                    token = get_reciever_token()
+                register_receiver(websocket, token)
+                
+                last_ping_time = time.time()
+                ping_interval = 15  # seconds
+                
+                while True:
+                    try:
+                        # Send periodic pings to prevent keepalive timeouts
+                        if time.time() - last_ping_time > ping_interval:
+                            try:
+                                websocket.ping()
+                                #write_to_log("Sent WebSocket ping")
+                                last_ping_time = time.time()
+                            except Exception as e:
+                                write_to_log(f"Ping failed: {e}")
+                                break  # Break inner loop to trigger reconnect
+
+                        # Process queued events
+                        event = queue.get(timeout=1)  # Non-blocking with timeout
+                        websocket.send(json.dumps(event))
+                        write_to_log(f"Sent event: {event['beacon_id']}")
+                    except Empty:
+                        continue  # Keep connection alive
+                    except Exception as e:
+                        write_to_log(f"Error sending event or ping: {e}")
+                        break  # Reconnect on error
+        except Exception as e:
+            write_to_log(f"WebSocket error: {e}. Reconnecting in 3 seconds...")
+            time.sleep(3)
+
+def register_receiver(websocket, token: str) -> None:
+    """Send receiver registration message."""
+    message = {'jwt': token, 'action': 'receiver_registration'}
+    websocket.send(json.dumps(message))
+    write_to_log("Receiver registered")
+
+def main():
+    websocket_url = os.getenv('WS_URL')
+    token = get_reciever_token()
+    
+    # Create shared queue
+    event_queue = multiprocessing.Queue()
+    write_to_log(f"Main: Queue created")
+    
+    # Start producer and consumer processes
+    producer_proc = Process(target=producer, args=(event_queue, token), name="Producer")
+    consumer_proc = Process(target=consumer, args=(event_queue, websocket_url), name="Consumer")
+    
+    try:
+        producer_proc.start()
+        consumer_proc.start()
+        producer_proc.join()
+        consumer_proc.join()
+    except KeyboardInterrupt:
+        write_to_log("Shutting down...")
+        producer_proc.terminate()
+        consumer_proc.terminate()
+
+if __name__ == "__main__":
+    main()
