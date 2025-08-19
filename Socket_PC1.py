@@ -17,7 +17,7 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(processName)s - %(message)s',
     handlers=[
-        logging.FileHandler(r"C:\Users\Desmond\Desktop\pcLogs.txt"),
+        logging.FileHandler(r"C:\Users\User\Desktop\pcLogs.txt"),
         logging.StreamHandler()
     ]
 )
