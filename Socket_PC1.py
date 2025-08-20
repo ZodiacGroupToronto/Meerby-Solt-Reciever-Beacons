@@ -164,8 +164,8 @@ def consumer(queue: Queue, websocket_url: str) -> None:
                         event_to_send = dict(event)
                         event_to_send['jwt'] = token
 
-                        websocket.send(json.dumps(event))
-                        write_to_log(f"Sent event: {event['beacon_id']}")
+                        websocket.send(json.dumps(event_to_send))
+                        write_to_log(f"Sent event: {event_to_send['beacon_id']}")
                     except Empty:
                         continue  # Keep connection alive
                     except Exception as e:
