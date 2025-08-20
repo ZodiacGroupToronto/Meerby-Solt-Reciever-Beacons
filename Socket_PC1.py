@@ -74,31 +74,48 @@ def get_reciever_serial_port() -> serial.Serial:
 def producer(queue: Queue, token: str) -> None:
     """Read beacon events from serial port and push to queue."""
     write_to_log(f"Producer: Queue created")
-    while True:
-        try:
-            receiverPort = get_reciever_serial_port()
-            write_to_log("Producer started, reading from serial port")
-            while True:
-                try:
-                    if receiverPort.in_waiting > 0:
-                        serialString = receiverPort.readline()
-                        beaconId = str(serialString[4:10]).replace("b", "").replace("'", "")
-                        if beaconId:
-                            event = {'action': 'beacon_press', 'beacon_id': beaconId}
-                            queue.put(event)
-                            write_to_log(f"Produced event: {beaconId}")
-                except serial.SerialException as e:
-                    write_to_log(f"Serial error: {e}")
-                    receiverPort.close()
-                    break  # Reconnect to serial port
-                except Exception as e:
-                    write_to_log(f"Unexpected error in producer: {e}")
-                    time.sleep(1)
-        except Exception as e:
-            write_to_log(f"Producer failed to initialize: {e}")
-            time.sleep(3)
+
+    """In TEST_MODE generate fake beacon presses; otherwise read from serial."""
+    test_mode = os.getenv("TEST_MODE", "0") == "1"
+
+    if test_mode:
+        write_to_log("Producer running in TEST_MODE: generating fake events")
+        fake_ids = ["A1B2C3", "D4E5F6", "112233", "445566"]
+        i = 0
+        while True:
+            beacon_id = fake_ids[i % len(fake_ids)]
+            event = {"jwt": token, "action": "beacon_press", "beacon_id": beacon_id}
+            queue.put(event)
+            write_to_log(f"[TEST_MODE] Produced event: {beacon_id}")
+            i += 1
+            time.sleep(2)    
+    else:
+        while True:
+            try:
+                receiverPort = get_reciever_serial_port()
+                write_to_log("Producer started, reading from serial port")
+                while True:
+                    try:
+                        if receiverPort.in_waiting > 0:
+                            serialString = receiverPort.readline()
+                            beaconId = str(serialString[4:10]).replace("b", "").replace("'", "")
+                            if beaconId:
+                                event = {'jwt': token, 'action': 'beacon_press', 'beacon_id': beaconId}
+                                queue.put(event)
+                                write_to_log(f"Produced event: {beaconId}")
+                    except serial.SerialException as e:
+                        write_to_log(f"Serial error: {e}")
+                        receiverPort.close()
+                        break  # Reconnect to serial port
+                    except Exception as e:
+                        write_to_log(f"Unexpected error in producer: {e}")
+                        time.sleep(1)
+            except Exception as e:
+                write_to_log(f"Producer failed to initialize: {e}")
+                time.sleep(3)
 
 def consumer(queue: Queue, websocket_url: str) -> None:
+    """Send events over WebSocket. On send/registration failure: get a new token, re-register, and retry the event once"""
     """Consume events from queue and send over WebSocket."""
     write_to_log(f"Consumer: Queue created")
     try:
@@ -113,10 +130,18 @@ def consumer(queue: Queue, websocket_url: str) -> None:
             with connect(websocket_url) as websocket:
                 write_to_log("Connection Successful!")
 
-                # Add token before sending event
-                current_token = get_reciever_token()
-                register_receiver(websocket, current_token)
+                # Use a fresh token if queue is empty, else try to reuse one
+                # try:
+                #     token = queue.get(block=False).get('jwt') if not queue.empty() else get_reciever_token()
+                # except Empty:
+                #     token = get_reciever_token()
+                # register_receiver(websocket, token)
                 
+                # Start each connection with a fresh token
+                token = get_reciever_token()
+                register_receiver(websocket, token)
+                write_to_log("Consumer registered receiver")
+
                 last_ping_time = time.time()
                 ping_interval = 15  # seconds
                 
@@ -131,33 +156,16 @@ def consumer(queue: Queue, websocket_url: str) -> None:
                             except Exception as e:
                                 write_to_log(f"Ping failed: {e}")
                                 break  # Break inner loop to trigger reconnect
-                            
-                            event = queue.get(timeout=1)  # Non-blocking with timeout
-                        # Process queued events
-                        try:
-                            # inject token right before sending
-                            event['jwt'] = current_token
-                            websocket.send(json.dumps(event))
-                            write_to_log(f"Sent event: {event['beacon_id']}")
-                        except Exception as e:
-                            write_to_log(f"Send failed ({e}). Refreshing token and re-registering...")
-                            try:
-                                # refresh token and re-register
-                                current_token = get_reciever_token()
-                                register_receiver(websocket, current_token)
-                            
-                                # resend once
-                                event['jwt'] = current_token
-                                websocket.send(json.dumps(event))
-                                write_to_log(f"Resent event after re-register: {event['beacon_id']}")
-                            except Exception as e2:
-                                write_to_log(f"Resend failed ({e2}). Reconnecting...")
-                                try: 
-                                    queue.put_nowait(event)
-                                except Exception: 
-                                    pass
-                                break  # break inner loop to reconnect
 
+                        # Process queued events
+                        event = queue.get(timeout=1)  # Non-blocking with timeout
+
+                        # Overwrite any stale jwt from producer with the fresh one for THIS connection
+                        event_to_send = dict(event)
+                        event_to_send['jwt'] = token
+
+                        websocket.send(json.dumps(event))
+                        write_to_log(f"Sent event: {event['beacon_id']}")
                     except Empty:
                         continue  # Keep connection alive
                     except Exception as e:
