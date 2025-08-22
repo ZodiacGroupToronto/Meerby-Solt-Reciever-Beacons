@@ -11,6 +11,7 @@ import logging
 from websockets.sync.client import connect
 import os
 from dotenv import load_dotenv
+import uuid
 
 # Configure logging
 logging.basicConfig(
@@ -125,25 +126,19 @@ def consumer(queue: Queue, websocket_url: str) -> None:
         write_to_log(f"Consumer initialization error: {e}")
         return
 
+    ping_interval = 15  # seconds
+
     while True:
         try:
             with connect(websocket_url) as websocket:
                 write_to_log("Connection Successful!")
 
-                # Use a fresh token if queue is empty, else try to reuse one
-                # try:
-                #     token = queue.get(block=False).get('jwt') if not queue.empty() else get_reciever_token()
-                # except Empty:
-                #     token = get_reciever_token()
-                # register_receiver(websocket, token)
-                
                 # Start each connection with a fresh token
                 token = get_reciever_token()
                 register_receiver(websocket, token)
                 write_to_log("Consumer registered receiver")
 
                 last_ping_time = time.time()
-                ping_interval = 15  # seconds
                 
                 while True:
                     try:
@@ -163,9 +158,20 @@ def consumer(queue: Queue, websocket_url: str) -> None:
                         # Overwrite any stale jwt from producer with the fresh one for THIS connection
                         event_to_send = dict(event)
                         event_to_send['jwt'] = token
+                        event_to_send['ackId'] = str(uuid.uuid4())
 
                         websocket.send(json.dumps(event_to_send))
-                        write_to_log(f"Sent event: {event_to_send['beacon_id']}")
+                        send_ts = time.time()
+                        write_to_log(f"Sent event: {event_to_send['beacon_id']}, ID={event_to_send['ackId']}")
+
+                        try:
+                            raw = websocket.recv()
+                            response = json.loads(raw)
+                            if response.get("type") == "ack" and "id" in response:
+                                write_to_log(f"ACK received for message ID: {response['id']}")
+                        except Exception as e:
+                            write_to_log(f"No response: {e}")
+
                     except Empty:
                         continue  # Keep connection alive
                     except Exception as e:
