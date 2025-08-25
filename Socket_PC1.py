@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 load_dotenv()
 
 # ACK tracking
-acks = {}
+acks = Queue()
 
 # Thread to handle incoming messages
 def receiver(ws):
@@ -37,7 +37,9 @@ def receiver(ws):
             raw = ws.recv()
             msg = json.loads(raw)
             if msg.get("type") == "ack":
-                acks[msg.get("id")] = True
+                server_id = msg.get("id")
+                if server_id:
+                    acks.put(server_id) 
             else:
                 pass
         except Exception as e:
@@ -189,10 +191,12 @@ def consumer(queue: Queue, websocket_url: str) -> None:
                         # Wait for ACK with timeout
                         t0 = time.time()
                         while time.time() - t0 < 0.5:  # 500ms
-                            if acks.pop(ack_id, None):
-                                write_to_log(f"ACK received: {ack_id}")
+                            try:
+                                server_id = acks.get_nowait()
+                                write_to_log(f"ACK received: {server_id}")
                                 break
-                            time.sleep(0.01)
+                            except Empty:
+                                time.sleep(0.01)
 
                     except Empty:
                         continue  # Keep connection alive
