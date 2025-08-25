@@ -12,6 +12,7 @@ from websockets.sync.client import connect
 import os
 from dotenv import load_dotenv
 import uuid
+import threading
 
 # Configure logging
 logging.basicConfig(
@@ -25,6 +26,23 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 load_dotenv()
+
+# ACK tracking
+acks = {}
+
+# Thread to handle incoming messages
+def receiver(ws):
+    while True:
+        try:
+            raw = ws.recv()
+            msg = json.loads(raw)
+            if msg.get("type") == "ack":
+                acks[msg.get("id")] = True
+            else:
+                pass
+        except Exception as e:
+            write_to_log(f"Receiver stopped: {e}")
+            break
 
 def write_to_log(message: str) -> None:
     """Log messages to file and console with timestamp."""
@@ -133,6 +151,8 @@ def consumer(queue: Queue, websocket_url: str) -> None:
             with connect(websocket_url) as websocket:
                 write_to_log("Connection Successful!")
 
+                threading.Thread(target=receiver, args=(websocket,), daemon=True).start()
+
                 # Start each connection with a fresh token
                 token = get_reciever_token()
                 register_receiver(websocket, token)
@@ -158,19 +178,21 @@ def consumer(queue: Queue, websocket_url: str) -> None:
                         # Overwrite any stale jwt from producer with the fresh one for THIS connection
                         event_to_send = dict(event)
                         event_to_send['jwt'] = token
-                        event_to_send['ackId'] = str(uuid.uuid4())
+                        # Add unique ackId for tracking
+                        ack_id = str(uuid.uuid4())
+                        event_to_send['ackId'] = str(ack_id)
 
                         websocket.send(json.dumps(event_to_send))
                         send_ts = time.time()
                         write_to_log(f"Sent event: {event_to_send['beacon_id']}, ID={event_to_send['ackId']}")
 
-                        try:
-                            raw = websocket.recv()
-                            response = json.loads(raw)
-                            if response.get("type") == "ack" and "id" in response:
-                                write_to_log(f"ACK received for message ID: {response['id']}")
-                        except Exception as e:
-                            write_to_log(f"No response: {e}")
+                        # Wait for ACK with timeout
+                        t0 = time.time()
+                        while time.time() - t0 < 0.5:  # 500ms
+                            if acks.pop(ack_id, None):
+                                write_to_log(f"ACK received: {ack_id}")
+                                break
+                            time.sleep(0.01)
 
                     except Empty:
                         continue  # Keep connection alive
