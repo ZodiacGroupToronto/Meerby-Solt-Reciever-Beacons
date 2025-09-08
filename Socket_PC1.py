@@ -14,6 +14,15 @@ from dotenv import load_dotenv
 import uuid
 import threading
 
+load_dotenv()
+
+#Check env variables
+required_env_vars = ['PASSPHRASE', 'STORE_BASE_URL', 'WS_URL']
+missing_vars = [var for var in required_env_vars if var not in os.environ]
+if missing_vars:
+    raise EnvironmentError(f"Missing required environment variables: {', '.join(missing_vars)}")
+
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -25,7 +34,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-load_dotenv()
+
 
 # ACK tracking
 acks = Queue()
@@ -53,12 +62,12 @@ def write_to_log(message: str) -> None:
 def get_reciever_token() -> str:
     #send to endpoint, get token
     password = os.getenv('PASSPHRASE')
-    url = os.getenv('MEERBY_LOGIN_URL')
+    login_url = os.getenv('STORE_BASE_URL') + '/wp-json/api/os_authorization'
     payload = {'password': password}
     
     while True:
         try:
-            response = requests.post(url, json=payload)
+            response = requests.post(login_url, json=payload)
             response.raise_for_status()
             data = response.json()
             if data.get('status') == 200:
@@ -114,8 +123,9 @@ def producer(queue: Queue, token: str) -> None:
         while True:
             try:
                 receiverPort = get_reciever_serial_port()
+                reciverConnected = True
                 write_to_log("Producer started, reading from serial port")
-                while True:
+                while reciverConnected:
                     try:
                         if receiverPort.in_waiting > 0:
                             serialString = receiverPort.readline()
@@ -128,6 +138,14 @@ def producer(queue: Queue, token: str) -> None:
                         write_to_log(f"Serial error: {e}")
                         receiverPort.close()
                         break  # Reconnect to serial port
+                    except OSError as e:
+                        if e.errno == 6:  # Device not configured
+                            write_to_log("Lost connection to serial device, attempting to reconnect...")
+                            receiverPort.close()
+                            reciverConnected = False
+                            time.sleep(3)
+                        else:
+                            raise  # re-raise other OS errors
                     except Exception as e:
                         write_to_log(f"Unexpected error in producer: {e}")
                         time.sleep(1)

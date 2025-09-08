@@ -2,7 +2,7 @@
 Create a .env file with the following variables:
 
 ```
-MEERBY_LOGIN_URL= <MEERBY_LOGIN_URL>
+STORE_BASE_URL= <STORE_BASE_URL> # e.g., https://dev.dcxs.cloud , no trailing slash
 WS_URL= <WEBSOCKET_URL>
 PASSPHRASE= <PASSPHRASE>
 SOLT_RECIVER_SERIAL_ID= <SOLT_RECIVER_SERIAL_ID>
