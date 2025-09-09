@@ -35,7 +35,6 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-
 # ACK tracking
 acks = Queue()
 
@@ -108,54 +107,50 @@ def producer(queue: Queue, token: str) -> None:
     """In TEST_MODE generate fake beacon presses; otherwise read from serial."""
     test_mode = os.getenv("TEST_MODE", "0") == "1"
 
-    if test_mode:
-        write_to_log("Producer running in TEST_MODE: generating fake events")
-        fake_ids = ["A1B2C3", "D4E5F6", "112233", "445566"]
-        i = 0
-        while True:
-            beacon_id = fake_ids[i % len(fake_ids)]
-            event = {"jwt": token, "action": "beacon_press", "beacon_id": beacon_id}
+    while True:
+        try:
+            receiverPort = get_reciever_serial_port()
+            event = {'action': 'receiver_connected'}
             queue.put(event)
-            write_to_log(f"[TEST_MODE] Produced event: {beacon_id}")
-            i += 1
-            time.sleep(2)    
-    else:
-        while True:
-            try:
-                receiverPort = get_reciever_serial_port()
-                reciverConnected = True
-                write_to_log("Producer started, reading from serial port")
-                while reciverConnected:
-                    try:
-                        if receiverPort.in_waiting > 0:
-                            serialString = receiverPort.readline()
-                            beaconId = str(serialString[4:10]).replace("b", "").replace("'", "")
-                            if beaconId:
-                                event = {'jwt': token, 'action': 'beacon_press', 'beacon_id': beaconId}
-                                queue.put(event)
-                                write_to_log(f"Produced event: {beaconId}")
-                    except serial.SerialException as e:
-                        write_to_log(f"Serial error: {e}")
-                        receiverPort.close()
-                        break  # Reconnect to serial port
-                    except OSError as e:
-                        if e.errno == 6:  # Device not configured
-                            write_to_log("Lost connection to serial device, attempting to reconnect...")
-                            receiverPort.close()
-                            reciverConnected = False
-                            time.sleep(3)
-                        else:
-                            raise  # re-raise other OS errors
-                    except Exception as e:
-                        write_to_log(f"Unexpected error in producer: {e}")
-                        time.sleep(1)
-            except Exception as e:
-                write_to_log(f"Producer failed to initialize: {e}")
-                time.sleep(3)
+            write_to_log("Producer started, reading from serial port")
+            while True:
+                try:
+                    if test_mode:
+                            time.sleep(5)  # Simulate delay between presses
+                            print("TEST MODE: Generating fake beacon press")
+                            beaconId = "AAABBB"  # Example test ID
+                            event = {'jwt': token, 'action': 'beacon_press', 'beacon_id': beaconId}
+                            queue.put(event)
+
+                    if receiverPort.in_waiting > 0:
+                        serialString = receiverPort.readline()
+                        beaconId = str(serialString[4:10]).replace("b", "").replace("'", "")
+                        
+                        if beaconId:
+                            event = {'jwt': token, 'action': 'beacon_press', 'beacon_id': beaconId}
+                            queue.put(event)
+                            write_to_log(f"Produced event: {beaconId}")
+                except serial.SerialException as e:
+                    write_to_log(f"Serial error: {e}")
+                    receiverPort.close()
+
+                    #Let the consumer know we lost connection
+                    event = {'action': 'receiver_disconnected'}
+                    queue.put(event)
+                    break  # Reconnect to serial port
+                except Exception as e:
+                    write_to_log(f"Unexpected error in producer: {e}")
+                    time.sleep(1)
+    
+        except Exception as e:
+            write_to_log(f"Producer failed to initialize: {e}")
+            time.sleep(3)
 
 def consumer(queue: Queue, websocket_url: str) -> None:
     """Send events over WebSocket. On send/registration failure: get a new token, re-register, and retry the event once"""
     """Consume events from queue and send over WebSocket."""
+    """Waits for producer to start connection to websocket"""
+
     write_to_log(f"Consumer: Queue created")
     try:
         if not isinstance(queue, multiprocessing.queues.Queue):
@@ -166,64 +161,94 @@ def consumer(queue: Queue, websocket_url: str) -> None:
 
     ping_interval = 15  # seconds
 
+    receiver_is_connected = False
+    websocket = None
+    last_ping_time = time.time()
+
     while True:
+        if receiver_is_connected and websocket is None:
+            time.sleep(1)
+
+            try:
+                websocket = connect(websocket_url)
+                write_to_log("Consumer: WebSocket connection established")
+            except Exception as e:
+                write_to_log(f"Consumer: WebSocket connection failed: {e}. Retrying in 3 seconds...")
+                time.sleep(3)
+                continue
+
+            # Start each connection with a fresh token
+            token = get_reciever_token()
+            register_receiver(websocket, token)
+
+            write_to_log("Consumer registered receiver")
+
+            continue
+        
+        if websocket:
+            # Send periodic pings to prevent keepalive timeouts
+            if time.time() - last_ping_time > ping_interval:
+                try:
+                    websocket.pong()
+                    #write_to_log("Sent WebSocket ping")
+                    last_ping_time = time.time()
+                except Exception as e:
+                    write_to_log(f"Ping failed: {e}")
+                    websocket.close()
+                    websocket = None
+        
+        event = None
         try:
-            with connect(websocket_url) as websocket:
-                write_to_log("Connection Successful!")
+            event = queue.get(timeout=1)  # Non-blocking with timeout
+            print(f"Consumer: processing event {event}")
+            print(f"receiver_is_connected: {receiver_is_connected} ")
+        except Empty:
+            continue
 
-                threading.Thread(target=receiver, args=(websocket,), daemon=True).start()
+        if event['action'] == 'receiver_connected':
+            receiver_is_connected = True
+            write_to_log("Consumer: Receiver connected event received")
 
-                # Start each connection with a fresh token
-                token = get_reciever_token()
-                register_receiver(websocket, token)
-                write_to_log("Consumer registered receiver")
+        elif event['action'] == 'receiver_disconnected':
+            receiver_is_connected = False
+            write_to_log("Consumer: Receiver disconnected event received")
+            websocket.close()
+            websocket = None
+        elif receiver_is_connected:
+            # try:
+                # threading.Thread(target=receiver, args=(websocket,), daemon=True).start()
+            try:
+                # Overwrite any stale jwt from producer with the fresh one for THIS connection
+                event_to_send = dict(event)
+                event_to_send['jwt'] = token
+                # Add unique ackId for tracking
+                ack_id = str(uuid.uuid4())
+                event_to_send['ackId'] = str(ack_id)
 
-                last_ping_time = time.time()
-                
-                while True:
-                    try:
-                        # Send periodic pings to prevent keepalive timeouts
-                        if time.time() - last_ping_time > ping_interval:
-                            try:
-                                websocket.ping()
-                                #write_to_log("Sent WebSocket ping")
-                                last_ping_time = time.time()
-                            except Exception as e:
-                                write_to_log(f"Ping failed: {e}")
-                                break  # Break inner loop to trigger reconnect
+                websocket.send(json.dumps(event_to_send))
+                send_ts = time.time()
+                write_to_log(f"Sent event: {event_to_send['beacon_id']}, ID={event_to_send['ackId']}")
 
-                        # Process queued events
-                        event = queue.get(timeout=1)  # Non-blocking with timeout
+                # Wait for ACK with timeout
+                # t0 = time.time()
+                # while time.time() - t0 < 0.5:  # 500ms
+                #     try:
+                #         server_id = acks.get_nowait()
+                #         write_to_log(f"ACK received: {server_id}")
+                #         break
+                #     except Empty:
+                #         time.sleep(0.01)
 
-                        # Overwrite any stale jwt from producer with the fresh one for THIS connection
-                        event_to_send = dict(event)
-                        event_to_send['jwt'] = token
-                        # Add unique ackId for tracking
-                        ack_id = str(uuid.uuid4())
-                        event_to_send['ackId'] = str(ack_id)
-
-                        websocket.send(json.dumps(event_to_send))
-                        send_ts = time.time()
-                        write_to_log(f"Sent event: {event_to_send['beacon_id']}, ID={event_to_send['ackId']}")
-
-                        # Wait for ACK with timeout
-                        t0 = time.time()
-                        while time.time() - t0 < 0.5:  # 500ms
-                            try:
-                                server_id = acks.get_nowait()
-                                write_to_log(f"ACK received: {server_id}")
-                                break
-                            except Empty:
-                                time.sleep(0.01)
-
-                    except Empty:
-                        continue  # Keep connection alive
-                    except Exception as e:
-                        write_to_log(f"Error sending event or ping: {e}")
-                        break  # Reconnect on error
-        except Exception as e:
-            write_to_log(f"WebSocket error: {e}. Reconnecting in 3 seconds...")
-            time.sleep(3)
+            except Empty:
+                continue  # Keep connection alive
+            except Exception as e:
+                write_to_log(f"Error sending event: {e}")
+                websocket.close()
+                websocket=None
+                    
+            # except Exception as e:
+            #     write_to_log(f"WebSocket error: {e}. Reconnecting in 3 seconds...")
+            #     time.sleep(3)
 
 def register_receiver(websocket, token: str) -> None:
     """Send receiver registration message."""
