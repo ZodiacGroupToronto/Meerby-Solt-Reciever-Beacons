@@ -13,8 +13,12 @@ import os
 from dotenv import load_dotenv
 import uuid
 import threading
+from pathlib import Path
 
 load_dotenv()
+
+# Dynamic log file path on user's Desktop
+log_file_path = Path.home() / "Desktop" / "pcLogs.txt"
 
 #Check env variables
 required_env_vars = ['PASSPHRASE', 'STORE_BASE_URL', 'WS_URL']
@@ -28,7 +32,7 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(processName)s - %(message)s',
     handlers=[
-        logging.FileHandler(r"C:\Users\User\Desktop\pcLogs.txt"),
+        logging.FileHandler(log_file_path, encoding='utf-8'),
         logging.StreamHandler()
     ]
 )
