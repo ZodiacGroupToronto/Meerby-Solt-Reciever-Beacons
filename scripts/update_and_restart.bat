@@ -38,6 +38,8 @@ REM Your app process settings (adjust to your environment)
 set "WINDOW_TITLE=MeerbySoltReceiver"
 set "PYTHON_EXE=%USERPROFILE%\AppData\Local\Programs\Python\Python311\python.exe"
 set "SCRIPT_PATH=%REPO_DIR%\Socket_PC1.py"
+REM NEW: default virtual environment directory inside the repo (can change)
+set "VENV_DIR=%REPO_DIR%\venv"
 
 REM OPTIONAL: extra args to your script
 set "SCRIPT_ARGS="
@@ -149,6 +151,9 @@ set "U_DEPLOYED_FILE=%~9"
 shift & shift & shift & shift & shift & shift & shift & shift & shift
 set "U_LOG_FILE=%~1"
 
+REM Derive venv directory (mirrors earlier config); not passed as param to keep call stable
+set "U_VENV_DIR=%U_REPO_DIR%\venv"
+
 if "%U_LOG_FILE%"=="" (
   set "U_LOG_FILE=%USERPROFILE%\Desktop\MeerbyUpdater\deploy.log"
 )
@@ -187,6 +192,29 @@ if errorlevel 1 (
   exit /b 1
 )
 
+REM Ensure / create & prepare Python virtual environment before starting app
+echo Ensuring virtual environment at %U_VENV_DIR% >> "%U_LOG_FILE%"
+if not exist "%U_VENV_DIR%\Scripts\python.exe" (
+  echo Creating venv... >> "%U_LOG_FILE%"
+  "%U_PYTHON_EXE%" -m venv "%U_VENV_DIR%" >> "%U_LOG_FILE%" 2>&1
+  if errorlevel 1 echo WARNING: venv creation failed. >> "%U_LOG_FILE%"
+) else (
+  echo Existing venv detected. >> "%U_LOG_FILE%"
+)
+
+if exist "%U_VENV_DIR%\Scripts\python.exe" (
+  echo Upgrading pip... >> "%U_LOG_FILE%"
+  "%U_VENV_DIR%\Scripts\python.exe" -m pip install --upgrade pip >> "%U_LOG_FILE%" 2>&1
+  if exist "%U_REPO_DIR%\requirements.txt" (
+    echo Installing requirements... >> "%U_LOG_FILE%"
+    "%U_VENV_DIR%\Scripts\python.exe" -m pip install -r "%U_REPO_DIR%\requirements.txt" --no-cache-dir >> "%U_LOG_FILE%" 2>&1
+  ) else (
+    echo requirements.txt not found, skipping dependency install. >> "%U_LOG_FILE%"
+  )
+) else (
+  echo Skipping dependency install: venv python missing. >> "%U_LOG_FILE%"
+)
+
 echo Reset to %U_REMOTE_HASH% >> "%U_LOG_FILE%"
 for /f "usebackq" %%h in (`git rev-parse HEAD`) do set "POST_RESET_HASH=%%h"
 echo Post-reset HEAD=%POST_RESET_HASH% >> "%U_LOG_FILE%"
@@ -199,11 +227,11 @@ taskkill /FI "WINDOWTITLE eq %U_WINDOW_TITLE%" /F >nul 2>&1
 REM --- Start the app with the same unique title so we can target it next time
 echo Starting app... >> "%U_LOG_FILE%"
 if "%U_SCRIPT_ARGS%"=="" (
-  echo start "%U_WINDOW_TITLE%" cmd /c ""%U_PYTHON_EXE%" "%U_SCRIPT_PATH%"" >> "%U_LOG_FILE%"
-  start "%U_WINDOW_TITLE%" cmd /c ""%U_PYTHON_EXE%" "%U_SCRIPT_PATH%""
+  echo start "%U_WINDOW_TITLE%" cmd /c ""%U_VENV_DIR%\Scripts\python.exe" "%U_SCRIPT_PATH%"" >> "%U_LOG_FILE%"
+  start "%U_WINDOW_TITLE%" cmd /c ""%U_VENV_DIR%\Scripts\python.exe" "%U_SCRIPT_PATH%""
 ) else (
-  echo start "%U_WINDOW_TITLE%" cmd /c ""%U_PYTHON_EXE%" "%U_SCRIPT_PATH%" %U_SCRIPT_ARGS%" >> "%U_LOG_FILE%"
-  start "%U_WINDOW_TITLE%" cmd /c ""%U_PYTHON_EXE%" "%U_SCRIPT_PATH%" %U_SCRIPT_ARGS%"
+  echo start "%U_WINDOW_TITLE%" cmd /c ""%U_VENV_DIR%\Scripts\python.exe" "%U_SCRIPT_PATH%" %U_SCRIPT_ARGS%" >> "%U_LOG_FILE%"
+  start "%U_WINDOW_TITLE%" cmd /c ""%U_VENV_DIR%\Scripts\python.exe" "%U_SCRIPT_PATH%" %U_SCRIPT_ARGS%"
 )
 
 timeout /t 2 >nul 2>&1
