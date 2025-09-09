@@ -36,7 +36,7 @@ set "LOG_FILE=%STATE_DIR%\deploy.log"
 
 REM Your app process settings (adjust to your environment)
 set "WINDOW_TITLE=MeerbySoltReceiver"
-set "PYTHON_EXE=%USERPROFILE%\AppData\Local\Programs\Python\Python3x\python.exe"
+set "PYTHON_EXE=%USERPROFILE%\AppData\Local\Programs\Python\Python311\python.exe"
 set "SCRIPT_PATH=%REPO_DIR%\Socket_PC1.py"
 
 REM OPTIONAL: extra args to your script
