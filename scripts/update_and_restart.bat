@@ -95,8 +95,8 @@ REM STEP 3: if no change, exit quietly
 REM -----------------------------
 if "%LOCAL_HASH%"=="%REMOTE_HASH%" (
   echo No change. local=%LOCAL_HASH% >> "%LOG_FILE%"
-  popd
-  exit /b 0
+  @REM popd
+  @REM exit /b 0
 )
 
 echo Change detected: %LOCAL_HASH% -> %REMOTE_HASH% >> "%LOG_FILE%"
@@ -154,9 +154,31 @@ if "%U_LOG_FILE%"=="" (
 )
 
 echo [%DATE% %TIME%] run-update begin >> "%U_LOG_FILE%"
+echo Running update with: repo="%U_REPO_DIR%" branch="%U_BRANCH%" targetCommit=%U_REMOTE_HASH% >> "%U_LOG_FILE%"
 
-pushd "%U_REPO_DIR%" || (echo Failed to cd to repo (runner) >> "%U_LOG_FILE%" & exit /b 1)
+if not exist "%U_REPO_DIR%" echo ERROR: Repo dir missing "%U_REPO_DIR%" >> "%U_LOG_FILE%"
+if not exist "%U_REPO_DIR%\.git" echo ERROR: .git missing in repo dir "%U_REPO_DIR%" >> "%U_LOG_FILE%"
 
+REM --- Change to the repo 
+pushd "%U_REPO_DIR%"
+echo pushd.errorlevel=%ERRORLEVEL% after attempting pushd >> "%U_LOG_FILE%"
+if errorlevel 1 (
+  echo pushd reported failure. Trying fallback cd /d. >> "%U_LOG_FILE%"
+  cd /d "%U_REPO_DIR%" 2>>"%U_LOG_FILE%"
+  echo fallback cd.errorlevel=%ERRORLEVEL% >> "%U_LOG_FILE%"
+  if errorlevel 1 (
+    echo FATAL: Cannot change directory to "%U_REPO_DIR%" >> "%U_LOG_FILE%"
+    exit /b 1
+  ) else (
+    echo Fallback cd succeeded. (Not using directory stack) >> "%U_LOG_FILE%"
+  )
+) else (
+  echo pushd success. Now CWD=%CD% >> "%U_LOG_FILE%"
+)
+
+if not exist .git echo WARNING: .git still not found in CWD=%CD% >> "%U_LOG_FILE%"
+
+echo Performing hard reset... >> "%U_LOG_FILE%"
 REM --- Do the hard reset now that we’re running from TEMP, not the repo file
 git reset --hard origin/%U_BRANCH% --quiet
 if errorlevel 1 (
@@ -165,14 +187,30 @@ if errorlevel 1 (
   exit /b 1
 )
 
+echo Reset to %U_REMOTE_HASH% >> "%U_LOG_FILE%"
+for /f "usebackq" %%h in (`git rev-parse HEAD`) do set "POST_RESET_HASH=%%h"
+echo Post-reset HEAD=%POST_RESET_HASH% >> "%U_LOG_FILE%"
+if /i not "%POST_RESET_HASH%"=="%U_REMOTE_HASH%" echo WARNING: HEAD mismatch expected=%U_REMOTE_HASH% got=%POST_RESET_HASH% >> "%U_LOG_FILE%"
+
+echo Stopping existing app (window title match) >> "%U_LOG_FILE%"
 REM --- Stop the existing app instance (scoped by unique window title)
 taskkill /FI "WINDOWTITLE eq %U_WINDOW_TITLE%" /F >nul 2>&1
 
 REM --- Start the app with the same unique title so we can target it next time
+echo Starting app... >> "%U_LOG_FILE%"
 if "%U_SCRIPT_ARGS%"=="" (
+  echo start "%U_WINDOW_TITLE%" cmd /c ""%U_PYTHON_EXE%" "%U_SCRIPT_PATH%"" >> "%U_LOG_FILE%"
   start "%U_WINDOW_TITLE%" cmd /c ""%U_PYTHON_EXE%" "%U_SCRIPT_PATH%""
 ) else (
+  echo start "%U_WINDOW_TITLE%" cmd /c ""%U_PYTHON_EXE%" "%U_SCRIPT_PATH%" %U_SCRIPT_ARGS%" >> "%U_LOG_FILE%"
   start "%U_WINDOW_TITLE%" cmd /c ""%U_PYTHON_EXE%" "%U_SCRIPT_PATH%" %U_SCRIPT_ARGS%"
+)
+
+timeout /t 2 >nul 2>&1
+(tasklist /v /fi "WINDOWTITLE eq %U_WINDOW_TITLE%" | find /i "%U_WINDOW_TITLE%" >nul ) && (
+  echo App process detected running. >> "%U_LOG_FILE%"
+) || (
+  echo WARNING: App window not detected after restart. >> "%U_LOG_FILE%"
 )
 
 REM --- Record deployed commit hash for reference (optional but handy)
@@ -182,5 +220,7 @@ for %%d in ("%U_DEPLOYED_FILE%") do (
 > "%U_DEPLOYED_FILE%" echo %U_REMOTE_HASH%
 
 echo Deployed %U_REMOTE_HASH% and restarted. >> "%U_LOG_FILE%"
+echo Update success commit=%U_REMOTE_HASH% >> "%U_LOG_FILE%"
+echo [%DATE% %TIME%] run-update end SUCCESS >> "%U_LOG_FILE%"
 popd
 exit /b 0
