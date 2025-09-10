@@ -102,7 +102,7 @@ if "%LOCAL_HASH%"=="%REMOTE_HASH%" (
   if exist "%PID_FILE%" (
     set /p APP_PID=<"%PID_FILE%"
     if defined APP_PID (
-      tasklist /nh /fi "PID eq !APP_PID!" | findstr /r ".*" >nul && set "PID_IS_RUNNING=true"
+      tasklist /nh /fi "PID eq !APP_PID!" | findstr "!APP_PID!" >nul && set "PID_IS_RUNNING=true"
     )
   )
   if defined PID_IS_RUNNING (
