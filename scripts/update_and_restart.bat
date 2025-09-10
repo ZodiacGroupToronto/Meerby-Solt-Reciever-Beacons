@@ -33,6 +33,7 @@ REM Where to store state/logs OUTSIDE the repo so they survive resets
 set "STATE_DIR=%USERPROFILE%\Desktop\MeerbyUpdater"
 set "DEPLOYED_FILE=%STATE_DIR%\last_deployed_commit.txt"
 set "LOG_FILE=%STATE_DIR%\deploy.log"
+set "PID_FILE=%REPO_DIR%\app.pid"
 
 REM Your app process settings (adjust to your environment)
 set "WINDOW_TITLE=MeerbySoltReceiver"
@@ -97,12 +98,18 @@ REM STEP 3: if no change, exit quietly (but ensure app is running)
 REM -----------------------------
 if "%LOCAL_HASH%"=="%REMOTE_HASH%" (
   echo No change. local=%LOCAL_HASH% >> "%LOG_FILE%"
-  tasklist /v /fi "WINDOWTITLE eq %WINDOW_TITLE%" | find /i "%WINDOW_TITLE%" >nul
-  if errorlevel 1 (
+  set "PID_IS_RUNNING="
+  if exist "%PID_FILE%" (
+    set /p APP_PID=<"%PID_FILE%"
+    if defined APP_PID (
+      tasklist /nh /fi "PID eq !APP_PID!" | findstr /r ".*" >nul && set "PID_IS_RUNNING=true"
+    )
+  )
+  if defined PID_IS_RUNNING (
+    echo Health check: App is running with PID !APP_PID!. >> "%LOG_FILE%"
+  ) else (
     echo App not running; attempting start. >> "%LOG_FILE%"
     call :ENSURE_AND_START_APP
-  ) else (
-    echo App already running. >> "%LOG_FILE%"
   )
   popd
   exit /b 0
@@ -133,7 +140,8 @@ REM   %7 = SCRIPT_PATH
 REM   %8 = SCRIPT_ARGS
 REM   %9 = DEPLOYED_FILE
 REM   %10 = LOG_FILE
-call "%TEMP_RUN%" run-update "%REPO_DIR%" "%BRANCH%" "%REMOTE_HASH%" "%WINDOW_TITLE%" "%PYTHON_EXE%" "%SCRIPT_PATH%" "%SCRIPT_ARGS%" "%DEPLOYED_FILE%" "%LOG_FILE%"
+REM   %11 = PID_FILE
+call "%TEMP_RUN%" run-update "%REPO_DIR%" "%BRANCH%" "%REMOTE_HASH%" "%WINDOW_TITLE%" "%PYTHON_EXE%" "%SCRIPT_PATH%" "%SCRIPT_ARGS%" "%DEPLOYED_FILE%" "%LOG_FILE%" "%PID_FILE%"
 
 set "EXITCODE=%ERRORLEVEL%"
 popd
@@ -157,6 +165,7 @@ set "U_SCRIPT_ARGS=%~8"
 set "U_DEPLOYED_FILE=%~9"
 shift & shift & shift & shift & shift & shift & shift & shift & shift
 set "U_LOG_FILE=%~1"
+set "U_PID_FILE=%~2"
 
 set "U_VENV_DIR=%U_REPO_DIR%\venv"
 if "%U_LOG_FILE%"=="" set "U_LOG_FILE=%USERPROFILE%\Desktop\MeerbyUpdater\deploy.log"
@@ -193,15 +202,19 @@ if errorlevel 1 (
   exit /b 1
 )
 
-echo Stopping existing app (window title match) >> "%U_LOG_FILE%"
-taskkill /FI "WINDOWTITLE eq %U_WINDOW_TITLE%" /F /T >> "%U_LOG_FILE%" 2>&1
-timeout /t 1 >nul 2>&1
-
-(tasklist /v /fi "WINDOWTITLE eq %U_WINDOW_TITLE%" | find /i "%U_WINDOW_TITLE%" >nul ) && (
-  echo Window title still detected after primary kill. Attempting secondary kill by script path. >> "%U_LOG_FILE%"
-  powershell -NoProfile -Command "Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -match [regex]::Escape('%U_SCRIPT_PATH%') } | ForEach-Object { try { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue } catch {} }" >> "%U_LOG_FILE%" 2>&1
-  timeout /t 1 >nul 2>&1
+echo Stopping existing app (PID from file)... >> "%U_LOG_FILE%"
+if exist "%U_PID_FILE%" (
+  set /p APP_PID=<"%U_PID_FILE%"
+  if defined APP_PID (
+    echo Attempting to kill process with PID !APP_PID!. >> "%U_LOG_FILE%"
+    taskkill /PID !APP_PID! /F /T >> "%U_LOG_FILE%" 2>&1
+  ) else (
+    echo PID file is empty. Nothing to kill. >> "%U_LOG_FILE%"
+  )
+) else (
+  echo PID file not found. Nothing to kill. >> "%U_LOG_FILE%"
 )
+timeout /t 1 >nul 2>&1
 
 echo Reset to %U_REMOTE_HASH% >> "%U_LOG_FILE%"
 for /f "usebackq" %%h in (`git rev-parse HEAD`) do set "POST_RESET_HASH=%%h"
@@ -236,6 +249,8 @@ set "L_SCRIPT_PATH=%U_SCRIPT_PATH%"
 if not defined L_SCRIPT_PATH set "L_SCRIPT_PATH=%SCRIPT_PATH%"
 set "L_SCRIPT_ARGS=%U_SCRIPT_ARGS%"
 if not defined L_SCRIPT_ARGS set "L_SCRIPT_ARGS=%SCRIPT_ARGS%"
+set "L_PID_FILE=%U_PID_FILE%"
+if not defined L_PID_FILE set "L_PID_FILE=%PID_FILE%"
 set "L_REPO_DIR=%U_REPO_DIR%"
 if not defined L_REPO_DIR set "L_REPO_DIR=%REPO_DIR%"
 set "L_REQUIREMENTS=%L_REPO_DIR%\requirements.txt"
@@ -270,18 +285,29 @@ if exist "%L_VENV_PY%" (
 )
 
 echo Starting app... >> "%L_LOG_FILE%"
-if "%L_SCRIPT_ARGS%"=="" (
-  echo start "%L_WINDOW_TITLE%" "%L_VENV_PY%" "%L_SCRIPT_PATH%" >> "%L_LOG_FILE%"
-  start "%L_WINDOW_TITLE%" "%L_VENV_PY%" "%L_SCRIPT_PATH%"
+set "POWERSHELL_CMD=powershell -NoProfile -Command "$p = Start-Process -FilePath '%L_VENV_PY%' -ArgumentList '%L_SCRIPT_PATH% %L_SCRIPT_ARGS%' -PassThru; echo $p.Id""
+echo %POWERSHELL_CMD% >> "%L_LOG_FILE%"
+
+for /f %%i in ('%POWERSHELL_CMD%') do (
+  set "APP_PID=%%i"
+)
+
+if defined APP_PID (
+  echo %APP_PID% > "%L_PID_FILE%"
+  echo App started with PID %APP_PID% >> "%L_LOG_FILE%"
 ) else (
-  echo start "%L_WINDOW_TITLE%" "%L_VENV_PY%" "%L_SCRIPT_PATH%" %L_SCRIPT_ARGS% >> "%L_LOG_FILE%"
-  start "%L_WINDOW_TITLE%" "%L_VENV_PY%" "%L_SCRIPT_PATH%" %L_SCRIPT_ARGS%
+  echo Failed to get PID for started app. >> "%L_LOG_FILE%"
 )
 
 timeout /t 2 >nul 2>&1
-(tasklist /v /fi "WINDOWTITLE eq %L_WINDOW_TITLE%" | find /i "%L_WINDOW_TITLE%" >nul ) && (
-  echo App process detected running. >> "%L_LOG_FILE%"
-) || (
-  echo WARNING: App window not detected after start. >> "%L_LOG_FILE%"
+if exist "%L_PID_FILE%" (
+  set /p APP_PID=<"%L_PID_FILE%"
+  tasklist /nh /fi "PID eq !APP_PID!" | findstr /r ".*" >nul && (
+    echo App process detected running. >> "%L_LOG_FILE%"
+  ) || (
+    echo WARNING: App process with PID !APP_PID! not detected after start. >> "%L_LOG_FILE%"
+  )
+) else (
+  echo WARNING: PID file not created. Cannot verify if app is running. >> "%L_LOG_FILE%"
 )
 goto :EOF

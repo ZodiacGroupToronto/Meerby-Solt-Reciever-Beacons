@@ -1,3 +1,4 @@
 .env
 output.txt
 venv/
+app.pid
