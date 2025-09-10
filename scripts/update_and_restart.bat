@@ -93,12 +93,19 @@ if "%REMOTE_HASH%"=="" (
 )
 
 REM -----------------------------
-REM STEP 3: if no change, exit quietly
+REM STEP 3: if no change, exit quietly (but ensure app is running)
 REM -----------------------------
 if "%LOCAL_HASH%"=="%REMOTE_HASH%" (
   echo No change. local=%LOCAL_HASH% >> "%LOG_FILE%"
-  @REM popd
-  @REM exit /b 0
+  tasklist /v /fi "WINDOWTITLE eq %WINDOW_TITLE%" | find /i "%WINDOW_TITLE%" >nul
+  if errorlevel 1 (
+    echo App not running; attempting start. >> "%LOG_FILE%"
+    call :ENSURE_AND_START_APP
+  ) else (
+    echo App already running. >> "%LOG_FILE%"
+  )
+  popd
+  exit /b 0
 )
 
 echo Change detected: %LOCAL_HASH% -> %REMOTE_HASH% >> "%LOG_FILE%"
@@ -151,12 +158,8 @@ set "U_DEPLOYED_FILE=%~9"
 shift & shift & shift & shift & shift & shift & shift & shift & shift
 set "U_LOG_FILE=%~1"
 
-REM Derive venv directory (mirrors earlier config); not passed as param to keep call stable
 set "U_VENV_DIR=%U_REPO_DIR%\venv"
-
-if "%U_LOG_FILE%"=="" (
-  set "U_LOG_FILE=%USERPROFILE%\Desktop\MeerbyUpdater\deploy.log"
-)
+if "%U_LOG_FILE%"=="" set "U_LOG_FILE=%USERPROFILE%\Desktop\MeerbyUpdater\deploy.log"
 
 echo [%DATE% %TIME%] run-update begin >> "%U_LOG_FILE%"
 echo Running update with: repo="%U_REPO_DIR%" branch="%U_BRANCH%" targetCommit=%U_REMOTE_HASH% >> "%U_LOG_FILE%"
@@ -164,7 +167,6 @@ echo Running update with: repo="%U_REPO_DIR%" branch="%U_BRANCH%" targetCommit=%
 if not exist "%U_REPO_DIR%" echo ERROR: Repo dir missing "%U_REPO_DIR%" >> "%U_LOG_FILE%"
 if not exist "%U_REPO_DIR%\.git" echo ERROR: .git missing in repo dir "%U_REPO_DIR%" >> "%U_LOG_FILE%"
 
-REM --- Change to the repo 
 pushd "%U_REPO_DIR%"
 echo pushd.errorlevel=%ERRORLEVEL% after attempting pushd >> "%U_LOG_FILE%"
 if errorlevel 1 (
@@ -184,7 +186,6 @@ if errorlevel 1 (
 if not exist .git echo WARNING: .git still not found in CWD=%CD% >> "%U_LOG_FILE%"
 
 echo Performing hard reset... >> "%U_LOG_FILE%"
-REM --- Do the hard reset now that we’re running from TEMP, not the repo file
 git reset --hard origin/%U_BRANCH% --quiet
 if errorlevel 1 (
   echo git reset failed >> "%U_LOG_FILE%"
@@ -192,27 +193,14 @@ if errorlevel 1 (
   exit /b 1
 )
 
-REM Ensure / create & prepare Python virtual environment before starting app
-echo Ensuring virtual environment at %U_VENV_DIR% >> "%U_LOG_FILE%"
-if not exist "%U_VENV_DIR%\Scripts\python.exe" (
-  echo Creating venv... >> "%U_LOG_FILE%"
-  "%U_PYTHON_EXE%" -m venv "%U_VENV_DIR%" >> "%U_LOG_FILE%" 2>&1
-  if errorlevel 1 echo WARNING: venv creation failed. >> "%U_LOG_FILE%"
-) else (
-  echo Existing venv detected. >> "%U_LOG_FILE%"
-)
+echo Stopping existing app (window title match) >> "%U_LOG_FILE%"
+taskkill /FI "WINDOWTITLE eq %U_WINDOW_TITLE%" /F /T >> "%U_LOG_FILE%" 2>&1
+timeout /t 1 >nul 2>&1
 
-if exist "%U_VENV_DIR%\Scripts\python.exe" (
-  echo Upgrading pip... >> "%U_LOG_FILE%"
-  "%U_VENV_DIR%\Scripts\python.exe" -m pip install --upgrade pip >> "%U_LOG_FILE%" 2>&1
-  if exist "%U_REPO_DIR%\requirements.txt" (
-    echo Installing requirements... >> "%U_LOG_FILE%"
-    "%U_VENV_DIR%\Scripts\python.exe" -m pip install -r "%U_REPO_DIR%\requirements.txt" --no-cache-dir >> "%U_LOG_FILE%" 2>&1
-  ) else (
-    echo requirements.txt not found, skipping dependency install. >> "%U_LOG_FILE%"
-  )
-) else (
-  echo Skipping dependency install: venv python missing. >> "%U_LOG_FILE%"
+(tasklist /v /fi "WINDOWTITLE eq %U_WINDOW_TITLE%" | find /i "%U_WINDOW_TITLE%" >nul ) && (
+  echo Window title still detected after primary kill. Attempting secondary kill by script path. >> "%U_LOG_FILE%"
+  powershell -NoProfile -Command "Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -match [regex]::Escape('%U_SCRIPT_PATH%') } | ForEach-Object { try { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue } catch {} }" >> "%U_LOG_FILE%" 2>&1
+  timeout /t 1 >nul 2>&1
 )
 
 echo Reset to %U_REMOTE_HASH% >> "%U_LOG_FILE%"
@@ -220,36 +208,8 @@ for /f "usebackq" %%h in (`git rev-parse HEAD`) do set "POST_RESET_HASH=%%h"
 echo Post-reset HEAD=%POST_RESET_HASH% >> "%U_LOG_FILE%"
 if /i not "%POST_RESET_HASH%"=="%U_REMOTE_HASH%" echo WARNING: HEAD mismatch expected=%U_REMOTE_HASH% got=%POST_RESET_HASH% >> "%U_LOG_FILE%"
 
-echo Stopping existing app (window title match) >> "%U_LOG_FILE%"
-REM --- Stop the existing app instance (scoped by unique window title)
-taskkill /FI "WINDOWTITLE eq %U_WINDOW_TITLE%" /F /T >> "%U_LOG_FILE%" 2>&1
-timeout /t 1 >nul 2>&1
+call :ENSURE_AND_START_APP
 
-REM Fallback: if still present, attempt kill by matching script path in process command line (PowerShell)
-(tasklist /v /fi "WINDOWTITLE eq %U_WINDOW_TITLE%" | find /i "%U_WINDOW_TITLE%" >nul ) && (
-  echo Window title still detected after primary kill. Attempting secondary kill by script path. >> "%U_LOG_FILE%"
-  powershell -NoProfile -Command "Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -match [regex]::Escape('%U_SCRIPT_PATH%') } | ForEach-Object { try { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue } catch {} }" >> "%U_LOG_FILE%" 2>&1
-  timeout /t 1 >nul 2>&1
-)
-
-REM --- Start the app with the same unique title so we can target it next time
- echo Starting app... >> "%U_LOG_FILE%"
-if "%U_SCRIPT_ARGS%"=="" (
-  echo start "%U_WINDOW_TITLE%" "%U_VENV_DIR%\Scripts\python.exe" "%U_SCRIPT_PATH%" >> "%U_LOG_FILE%"
-  start "%U_WINDOW_TITLE%" "%U_VENV_DIR%\Scripts\python.exe" "%U_SCRIPT_PATH%"
-) else (
-  echo start "%U_WINDOW_TITLE%" "%U_VENV_DIR%\Scripts\python.exe" "%U_SCRIPT_PATH%" %U_SCRIPT_ARGS% >> "%U_LOG_FILE%"
-  start "%U_WINDOW_TITLE%" "%U_VENV_DIR%\Scripts\python.exe" "%U_SCRIPT_PATH%" %U_SCRIPT_ARGS%
-)
-
-timeout /t 2 >nul 2>&1
-(tasklist /v /fi "WINDOWTITLE eq %U_WINDOW_TITLE%" | find /i "%U_WINDOW_TITLE%" >nul ) && (
-  echo App process detected running. >> "%U_LOG_FILE%"
-) || (
-  echo WARNING: App window not detected after restart. >> "%U_LOG_FILE%"
-)
-
-REM --- Record deployed commit hash for reference (optional but handy)
 for %%d in ("%U_DEPLOYED_FILE%") do (
   if not exist "%%~dpd" mkdir "%%~dpd" >nul 2>&1
 )
@@ -260,3 +220,68 @@ echo Update success commit=%U_REMOTE_HASH% >> "%U_LOG_FILE%"
 echo [%DATE% %TIME%] run-update end SUCCESS >> "%U_LOG_FILE%"
 popd
 exit /b 0
+
+REM ============================================================================
+REM Common reusable label to ensure env and start app (auto-detects variable set)
+REM ============================================================================
+:ENSURE_AND_START_APP
+REM Determine which variable set is active (U_* or base)
+set "L_LOG_FILE=%U_LOG_FILE%"
+if not defined L_LOG_FILE set "L_LOG_FILE=%LOG_FILE%"
+set "L_WINDOW_TITLE=%U_WINDOW_TITLE%"
+if not defined L_WINDOW_TITLE set "L_WINDOW_TITLE=%WINDOW_TITLE%"
+set "L_VENV_DIR=%U_VENV_DIR%"
+if not defined L_VENV_DIR set "L_VENV_DIR=%VENV_DIR%"
+set "L_SCRIPT_PATH=%U_SCRIPT_PATH%"
+if not defined L_SCRIPT_PATH set "L_SCRIPT_PATH=%SCRIPT_PATH%"
+set "L_SCRIPT_ARGS=%U_SCRIPT_ARGS%"
+if not defined L_SCRIPT_ARGS set "L_SCRIPT_ARGS=%SCRIPT_ARGS%"
+set "L_REPO_DIR=%U_REPO_DIR%"
+if not defined L_REPO_DIR set "L_REPO_DIR=%REPO_DIR%"
+set "L_REQUIREMENTS=%L_REPO_DIR%\requirements.txt"
+set "L_BASE_PYTHON=%U_PYTHON_EXE%"
+if not defined L_BASE_PYTHON set "L_BASE_PYTHON=%PYTHON_EXE%"
+set "L_VENV_PY=%L_VENV_DIR%\Scripts\python.exe"
+
+echo Ensuring virtual environment at %L_VENV_DIR% >> "%L_LOG_FILE%"
+if not exist "%L_VENV_PY%" (
+  if exist "%L_BASE_PYTHON%" (
+    echo Creating venv... >> "%L_LOG_FILE%"
+    "%L_BASE_PYTHON%" -m venv "%L_VENV_DIR%" >> "%L_LOG_FILE%" 2>&1
+  ) else (
+    echo WARNING: Base python exe not found at %L_BASE_PYTHON%. >> "%L_LOG_FILE%"
+  )
+) else (
+  echo Existing venv detected. >> "%L_LOG_FILE%"
+)
+
+if exist "%L_VENV_PY%" (
+  echo Upgrading pip... >> "%L_LOG_FILE%"
+  "%L_VENV_PY%" -m pip install --upgrade pip >> "%L_LOG_FILE%" 2>&1
+  if exist "%L_REQUIREMENTS%" (
+    echo Installing requirements... >> "%L_LOG_FILE%"
+    "%L_VENV_PY%" -m pip install -r "%L_REQUIREMENTS%" --no-cache-dir >> "%L_LOG_FILE%" 2>&1
+  ) else (
+    echo requirements.txt not found, skipping dependency install. >> "%L_LOG_FILE%"
+  )
+) else (
+  echo WARNING: venv python missing; proceeding with fallback interpreter. >> "%L_LOG_FILE%"
+  set "L_VENV_PY=%L_BASE_PYTHON%"
+)
+
+echo Starting app... >> "%L_LOG_FILE%"
+if "%L_SCRIPT_ARGS%"=="" (
+  echo start "%L_WINDOW_TITLE%" "%L_VENV_PY%" "%L_SCRIPT_PATH%" >> "%L_LOG_FILE%"
+  start "%L_WINDOW_TITLE%" "%L_VENV_PY%" "%L_SCRIPT_PATH%"
+) else (
+  echo start "%L_WINDOW_TITLE%" "%L_VENV_PY%" "%L_SCRIPT_PATH%" %L_SCRIPT_ARGS% >> "%L_LOG_FILE%"
+  start "%L_WINDOW_TITLE%" "%L_VENV_PY%" "%L_SCRIPT_PATH%" %L_SCRIPT_ARGS%
+)
+
+timeout /t 2 >nul 2>&1
+(tasklist /v /fi "WINDOWTITLE eq %L_WINDOW_TITLE%" | find /i "%L_WINDOW_TITLE%" >nul ) && (
+  echo App process detected running. >> "%L_LOG_FILE%"
+) || (
+  echo WARNING: App window not detected after start. >> "%L_LOG_FILE%"
+)
+goto :EOF
