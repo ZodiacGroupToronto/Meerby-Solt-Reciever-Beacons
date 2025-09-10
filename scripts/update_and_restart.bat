@@ -222,16 +222,24 @@ if /i not "%POST_RESET_HASH%"=="%U_REMOTE_HASH%" echo WARNING: HEAD mismatch exp
 
 echo Stopping existing app (window title match) >> "%U_LOG_FILE%"
 REM --- Stop the existing app instance (scoped by unique window title)
-taskkill /FI "WINDOWTITLE eq %U_WINDOW_TITLE%" /F >nul 2>&1
+taskkill /FI "WINDOWTITLE eq %U_WINDOW_TITLE%" /F /T >> "%U_LOG_FILE%" 2>&1
+timeout /t 1 >nul 2>&1
+
+REM Fallback: if still present, attempt kill by matching script path in process command line (PowerShell)
+(tasklist /v /fi "WINDOWTITLE eq %U_WINDOW_TITLE%" | find /i "%U_WINDOW_TITLE%" >nul ) && (
+  echo Window title still detected after primary kill. Attempting secondary kill by script path. >> "%U_LOG_FILE%"
+  powershell -NoProfile -Command "Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -match [regex]::Escape('%U_SCRIPT_PATH%') } | ForEach-Object { try { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue } catch {} }" >> "%U_LOG_FILE%" 2>&1
+  timeout /t 1 >nul 2>&1
+)
 
 REM --- Start the app with the same unique title so we can target it next time
-echo Starting app... >> "%U_LOG_FILE%"
+ echo Starting app... >> "%U_LOG_FILE%"
 if "%U_SCRIPT_ARGS%"=="" (
-  echo start "%U_WINDOW_TITLE%" cmd /c ""%U_VENV_DIR%\Scripts\python.exe" "%U_SCRIPT_PATH%"" >> "%U_LOG_FILE%"
-  start "%U_WINDOW_TITLE%" cmd /c ""%U_VENV_DIR%\Scripts\python.exe" "%U_SCRIPT_PATH%""
+  echo start "%U_WINDOW_TITLE%" "%U_VENV_DIR%\Scripts\python.exe" "%U_SCRIPT_PATH%" >> "%U_LOG_FILE%"
+  start "%U_WINDOW_TITLE%" "%U_VENV_DIR%\Scripts\python.exe" "%U_SCRIPT_PATH%"
 ) else (
-  echo start "%U_WINDOW_TITLE%" cmd /c ""%U_VENV_DIR%\Scripts\python.exe" "%U_SCRIPT_PATH%" %U_SCRIPT_ARGS%" >> "%U_LOG_FILE%"
-  start "%U_WINDOW_TITLE%" cmd /c ""%U_VENV_DIR%\Scripts\python.exe" "%U_SCRIPT_PATH%" %U_SCRIPT_ARGS%"
+  echo start "%U_WINDOW_TITLE%" "%U_VENV_DIR%\Scripts\python.exe" "%U_SCRIPT_PATH%" %U_SCRIPT_ARGS% >> "%U_LOG_FILE%"
+  start "%U_WINDOW_TITLE%" "%U_VENV_DIR%\Scripts\python.exe" "%U_SCRIPT_PATH%" %U_SCRIPT_ARGS%
 )
 
 timeout /t 2 >nul 2>&1
