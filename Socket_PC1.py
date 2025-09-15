@@ -189,11 +189,12 @@ def consumer(queue: Queue, websocket_url: str) -> None:
 
             continue
         
+        #send ping to keep connection alive, regardless of event from producer
         if websocket:
             # Send periodic pings to prevent keepalive timeouts
             if time.time() - last_ping_time > ping_interval:
                 try:
-                    websocket.pong()
+                    websocket.ping()
                     #write_to_log("Sent WebSocket ping")
                     last_ping_time = time.time()
                 except Exception as e:
@@ -213,18 +214,18 @@ def consumer(queue: Queue, websocket_url: str) -> None:
             receiver_is_connected = True
             write_to_log("Consumer: Receiver connected event received")
 
-        elif event['action'] == 'receiver_disconnected':
+        elif event['action'] == 'receiver_disconnected' and websocket is not None:
             receiver_is_connected = False
             write_to_log("Consumer: Receiver disconnected event received")
             websocket.close()
             websocket = None
-        elif receiver_is_connected:
+        elif receiver_is_connected and websocket is not None:
             # try:
                 # threading.Thread(target=receiver, args=(websocket,), daemon=True).start()
             try:
                 # Overwrite any stale jwt from producer with the fresh one for THIS connection
                 event_to_send = dict(event)
-                event_to_send['jwt'] = token
+                event_to_send['jwt'] = token 
                 # Add unique ackId for tracking
                 ack_id = str(uuid.uuid4())
                 event_to_send['ackId'] = str(ack_id)
