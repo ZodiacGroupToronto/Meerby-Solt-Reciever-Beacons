@@ -37,7 +37,15 @@ set "PID_FILE=%REPO_DIR%\app.pid"
 
 REM Your app process settings (adjust to your environment)
 set "WINDOW_TITLE=MeerbySoltReceiver"
-set "PYTHON_EXE=%USERPROFILE%\AppData\Local\Programs\Python\Python311\python.exe"
+REM Auto-detect latest Python3* installation under %LocalAppData% (fallback to python on PATH)
+set "PYTHON_EXE="
+for /f "delims=" %%D in ('dir /b /ad "%USERPROFILE%\AppData\Local\Programs\Python\Python3*" 2^>nul ^| sort /r') do (
+  if not defined PYTHON_EXE set "PYTHON_EXE=%USERPROFILE%\AppData\Local\Programs\Python\%%D\python.exe"
+)
+if not defined PYTHON_EXE (
+  echo WARNING: Could not auto-detect a Python3 installation in %USERPROFILE%\AppData\Local\Programs\Python>>"%LOG_FILE%"
+  set "PYTHON_EXE=python"
+)
 set "SCRIPT_PATH=%REPO_DIR%\Socket_PC1.py"
 REM NEW: default virtual environment directory inside the repo (can change)
 set "VENV_DIR=%REPO_DIR%\venv"
