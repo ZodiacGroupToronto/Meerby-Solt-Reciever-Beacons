@@ -40,23 +40,23 @@ logger = logging.getLogger(__name__)
 
 
 # ACK tracking
-acks = Queue()
+# acks = Queue()
 
-# Thread to handle incoming messages
-def receiver(ws):
-    while True:
-        try:
-            raw = ws.recv()
-            msg = json.loads(raw)
-            if msg.get("type") == "ack":
-                server_id = msg.get("id")
-                if server_id:
-                    acks.put(server_id) 
-            else:
-                pass
-        except Exception as e:
-            write_to_log(f"Receiver stopped: {e}")
-            break
+# # Thread to handle incoming messages
+# def receiver(ws):
+#     while True:
+#         try:
+#             raw = ws.recv()
+#             msg = json.loads(raw)
+#             if msg.get("type") == "ack":
+#                 server_id = msg.get("id")
+#                 if server_id:
+#                     acks.put(server_id) 
+#             else:
+#                 pass
+#         except Exception as e:
+#             write_to_log(f"Receiver stopped: {e}")
+#             break
 
 def write_to_log(message: str) -> None:
     """Log messages to file and console with timestamp."""
