@@ -42,21 +42,22 @@ logger = logging.getLogger(__name__)
 # ACK tracking
 # acks = Queue()
 
-# # Thread to handle incoming messages
-# def receiver(ws):
-#     while True:
-#         try:
-#             raw = ws.recv()
-#             msg = json.loads(raw)
-#             if msg.get("type") == "ack":
-#                 server_id = msg.get("id")
-#                 if server_id:
-#                     acks.put(server_id) 
-#             else:
-#                 pass
-#         except Exception as e:
-#             write_to_log(f"Receiver stopped: {e}")
-#             break
+# Thread to handle incoming messages
+def receiver(ws):
+    while True:
+        try:
+            raw = ws.recv()
+            msg = json.loads(raw)
+            if msg.get("type") == "ack":
+                server_id = msg.get("id")
+                if server_id:
+                    write_to_log(f"WS Reciever: ACK received - {server_id}")
+                    # acks.put(server_id) 
+            else:
+                pass
+        except Exception as e:
+            write_to_log(f"WS Reciever: Stopped - {e}")
+            break
 
 def write_to_log(message: str) -> None:
     """Log messages to file and console with timestamp."""
@@ -169,6 +170,9 @@ def consumer(queue: Queue, websocket_url: str) -> None:
     websocket = None
     last_ping_time = time.time()
 
+    websocket_receiver_proc = None
+
+
     while True:
         if receiver_is_connected and websocket is None:
             time.sleep(1)
@@ -194,11 +198,14 @@ def consumer(queue: Queue, websocket_url: str) -> None:
             # Send periodic pings to prevent keepalive timeouts
             if time.time() - last_ping_time > ping_interval:
                 try:
-                    websocket.pong()
-                    #write_to_log("Sent WebSocket ping")
+                    websocket.ping()
+                    write_to_log("Sent WebSocket ping")
                     last_ping_time = time.time()
                 except Exception as e:
                     write_to_log(f"Ping failed: {e}")
+                    # if websocket_receiver_proc:
+                    #     websocket_receiver_proc.terminate()
+                    #     websocket_receiver_proc = None
                     websocket.close()
                     websocket = None
         
@@ -213,15 +220,24 @@ def consumer(queue: Queue, websocket_url: str) -> None:
         if event['action'] == 'receiver_connected':
             receiver_is_connected = True
             write_to_log("Consumer: Receiver connected event received")
+            continue
 
         elif event['action'] == 'receiver_disconnected' and websocket is not None:
             receiver_is_connected = False
             write_to_log("Consumer: Receiver disconnected event received")
+            # if websocket_receiver_proc:
+            #     websocket_receiver_proc.terminate()
+            #     websocket_receiver_proc = None
             websocket.close()
             websocket = None
+            continue
+
         elif receiver_is_connected and websocket is not None:
             # try:
                 # threading.Thread(target=receiver, args=(websocket,), daemon=True).start()
+            if websocket_receiver_proc is None or not websocket_receiver_proc.is_alive():
+                websocket_receiver_proc = threading.Thread(target=receiver, args=(websocket,), daemon=True, name="WebSocketReceiver")
+                websocket_receiver_proc.start()
             try:
                 # Overwrite any stale jwt from producer with the fresh one for THIS connection
                 event_to_send = dict(event)
@@ -248,6 +264,9 @@ def consumer(queue: Queue, websocket_url: str) -> None:
                 continue  # Keep connection alive
             except Exception as e:
                 write_to_log(f"Error sending event: {e}")
+                # if websocket_receiver_proc:
+                #     websocket_receiver_proc.terminate()
+                #     websocket_receiver_proc = None
                 websocket.close()
                 websocket=None
                     
@@ -282,6 +301,7 @@ def main():
         write_to_log("Shutting down...")
         producer_proc.terminate()
         consumer_proc.terminate()
+
 
 if __name__ == "__main__":
     main()
