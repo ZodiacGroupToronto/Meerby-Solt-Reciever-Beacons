@@ -293,7 +293,7 @@ if exist "%L_VENV_PY%" (
 )
 
 echo Starting app... >> "%L_LOG_FILE%"
-set "POWERSHELL_CMD=powershell -NoProfile -Command "$p = Start-Process -FilePath '%L_VENV_PY%' -ArgumentList '%L_SCRIPT_PATH% %L_SCRIPT_ARGS%' -PassThru; echo $p.Id""
+set "POWERSHELL_CMD=powershell -NoProfile -Command "$p = Start-Process -FilePath '\""%L_VENV_PY%"\"' -ArgumentList '\""%L_SCRIPT_PATH%"\" %L_SCRIPT_ARGS%' -PassThru; echo $p.Id""
 echo %POWERSHELL_CMD% >> "%L_LOG_FILE%"
 
 for /f %%i in ('%POWERSHELL_CMD%') do (
