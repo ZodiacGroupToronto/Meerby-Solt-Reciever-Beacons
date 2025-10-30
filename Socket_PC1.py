@@ -276,7 +276,8 @@ def consumer(queue: Queue, websocket_url: str) -> None:
 
 def register_receiver(websocket, token: str) -> None:
     """Send receiver registration message."""
-    message = {'jwt': token, 'action': 'receiver_registration'}
+    label = os.getenv('RECEIVER_NAME', 'Receiver')
+    message = {'jwt': token, 'action': 'receiver_registration', 'label': label}
     websocket.send(json.dumps(message))
     write_to_log("Receiver registered")
 
