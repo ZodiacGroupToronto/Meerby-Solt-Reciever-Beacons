@@ -49,20 +49,14 @@ REM -----------------------------
 REM PYTHON AUTO-DETECTION (covers user/system installs, store stub)
 REM -----------------------------
 set "PYTHON_EXE="
-for %%P in (
-  "%USERPROFILE%\AppData\Local\Programs\Python\Python3*\python.exe"
-  "%ProgramFiles%\Python3*\python.exe"
-  "%ProgramFiles(x86)%\Python3*\python.exe"
-  "%LOCALAPPDATA%\Microsoft\WindowsApps\python.exe"
-  "C:\Program Files\Python313\python.exe"
-  "C:\Program Files\Python312\python.exe"
-) do (
-  if exist "%%~P" (
-    set "PYTHON_EXE=%%~P"
-    goto :FOUND_PY
-  )
-)
-:FOUND_PY
+set "PYTHON_EXE="
+
+if exist "%ProgramFiles%\Python313\python.exe" set "PYTHON_EXE=%ProgramFiles%\Python313\python.exe"
+if not defined PYTHON_EXE if exist "%ProgramFiles%\Python312\python.exe" set "PYTHON_EXE=%ProgramFiles%\Python312\python.exe"
+if not defined PYTHON_EXE if exist "%USERPROFILE%\AppData\Local\Programs\Python\Python313\python.exe" set "PYTHON_EXE=%USERPROFILE%\AppData\Local\Programs\Python\Python313\python.exe"
+if not defined PYTHON_EXE if exist "%USERPROFILE%\AppData\Local\Programs\Python\Python312\python.exe" set "PYTHON_EXE=%USERPROFILE%\AppData\Local\Programs\Python\Python312\python.exe"
+if not defined PYTHON_EXE if exist "%LOCALAPPDATA%\Microsoft\WindowsApps\python.exe" set "PYTHON_EXE=%LOCALAPPDATA%\Microsoft\WindowsApps\python.exe"
+
 if not defined PYTHON_EXE (
   echo [%DATE% %TIME%] WARNING: Could not find Python automatically; falling back to PATH >> "%LOG_FILE%"
   set "PYTHON_EXE=python"
