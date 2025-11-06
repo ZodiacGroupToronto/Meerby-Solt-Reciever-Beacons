@@ -35,9 +35,12 @@ if not defined PYTHON_EXE (
   for /f "delims=" %%D in ('
     dir /b /ad "C:\Program Files\Python*" 2^>nul ^| sort /r
   ') do (
-    if not defined PYTHON_EXE set "PYTHON_EXE=C:\Program Files\%%D\python.exe"
+    if not defined PYTHON_EXE if exist "C:\Program Files\%%D\python.exe" (
+      set "PYTHON_EXE=C:\Program Files\%%D\python.exe"
+    )
   )
 )
+
 
 REM 3) System-wide 32-bit (C:\Program Files (x86)\Python*)
 if not defined PYTHON_EXE (
