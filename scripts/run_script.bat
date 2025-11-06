@@ -20,11 +20,42 @@ set "PID_FILE=%REPO_DIR%\app.pid"
 REM App process settings
 set "WINDOW_TITLE=MeerbySoltReceiver"
 
-REM Python detection (prefer local user install)
+REM Python detection (prefer local user install, then Program Files)
 set "PYTHON_EXE="
-for /f "delims=" %%D in ('dir /b /ad "%USERPROFILE%\AppData\Local\Programs\Python\Python3*" 2^>nul ^| sort /r') do (
-  if not defined PYTHON_EXE set "PYTHON_EXE=%USERPROFILE%\AppData\Local\Programs\Python\%%D\python.exe"
+
+REM 1) User-local installs (Latest first)
+for /f "delims=" %%D in ('
+  dir /b /ad "%LOCALAPPDATA%\Programs\Python\Python3*" 2^>nul ^| sort /r
+') do (
+  if not defined PYTHON_EXE set "PYTHON_EXE=%LOCALAPPDATA%\Programs\Python\%%D\python.exe"
 )
+
+REM 2) System-wide (C:\Program Files\Python*)
+if not defined PYTHON_EXE (
+  for /f "delims=" %%D in ('
+    dir /b /ad "C:\Program Files\Python*" 2^>nul ^| sort /r
+  ') do (
+    if not defined PYTHON_EXE set "PYTHON_EXE=C:\Program Files\%%D\python.exe"
+  )
+)
+
+REM 3) System-wide 32-bit (C:\Program Files (x86)\Python*)
+if not defined PYTHON_EXE (
+  for /f "delims=" %%D in ('
+    dir /b /ad "C:\Program Files (x86)\Python*" 2^>nul ^| sort /r
+  ') do (
+    if not defined PYTHON_EXE set "PYTHON_EXE=C:\Program Files (x86)\%%D\python.exe"
+  )
+)
+
+REM 4) Fallback: any python.exe found on disk/PATH via WHERE
+if not defined PYTHON_EXE (
+  for /f "delims=" %%P in ('where python.exe 2^>nul') do (
+    if not defined PYTHON_EXE set "PYTHON_EXE=%%P"
+  )
+)
+
+REM 5) Last resort: name only (hope it's on PATH)
 if not defined PYTHON_EXE set "PYTHON_EXE=python"
 
 REM App entry point and venv
