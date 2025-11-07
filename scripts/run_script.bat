@@ -23,11 +23,15 @@ set "WINDOW_TITLE=MeerbySoltReceiver"
 REM Python detection (prefer local user install, then Program Files)
 set "PYTHON_EXE="
 
-REM 1) User-local installs (Latest first)
+REM 1) User-local installs (Latest first) — pick first real python(.exe/.3.exe)
 for /f "delims=" %%D in ('
   dir /b /ad "%LOCALAPPDATA%\Programs\Python\Python3*" 2^>nul ^| sort /r
 ') do (
-  if not defined PYTHON_EXE set "PYTHON_EXE=%LOCALAPPDATA%\Programs\Python\%%D\python.exe"
+  for %%N in (python.exe python3.exe) do (
+    if not defined PYTHON_EXE if exist "%LOCALAPPDATA%\Programs\Python\%%D\%%N" (
+      set "PYTHON_EXE=%LOCALAPPDATA%\Programs\Python\%%D\%%N"
+    )
+  )
 )
 
 REM 2) System-wide (C:\Program Files\Python*)
@@ -51,10 +55,12 @@ if not defined PYTHON_EXE (
   )
 )
 
-REM 4) Fallback: any python.exe found on disk/PATH via WHERE
+REM 4) Fallback: PATH (ignore WindowsApps shim)
 if not defined PYTHON_EXE (
   for /f "delims=" %%P in ('where python.exe 2^>nul') do (
-    if not defined PYTHON_EXE set "PYTHON_EXE=%%P"
+    echo "%%P" | findstr /i /c:"\WindowsApps\python.exe" >nul || (
+      if not defined PYTHON_EXE set "PYTHON_EXE=%%P"
+    )
   )
 )
 

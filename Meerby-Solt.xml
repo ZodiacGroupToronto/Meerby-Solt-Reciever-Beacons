@@ -31,9 +31,10 @@
     <Priority>7</Priority>
   </Settings>
   <Actions Context="Author">
-    <Exec>
-        <Command>C:\Users\{{FullUser}}\Meerby-Solt-Reciever-Beacons\scripts\run_script.bat</Command>
-        <WorkingDirectory>C:\Users\{{FullUser}}\Meerby-Solt-Reciever-Beacons\scripts</WorkingDirectory>
-    </Exec>
-  </Actions>
+  <Exec>
+    <Command>%SystemRoot%\System32\cmd.exe</Command>
+    <Arguments>/d /s /c ""C:\Users\{{UserName}}\Meerby-Solt-Reciever-Beacons\scripts\run_script.bat""</Arguments>
+    <WorkingDirectory>C:\Users\{{UserName}}\Meerby-Solt-Reciever-Beacons\scripts</WorkingDirectory>
+  </Exec>
+</Actions>
 </Task>
