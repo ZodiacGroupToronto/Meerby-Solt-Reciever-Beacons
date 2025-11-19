@@ -198,8 +198,14 @@ def consumer(queue: Queue, websocket_url: str) -> None:
             # Send periodic pings to prevent keepalive timeouts
             if time.time() - last_ping_time > ping_interval:
                 try:
-                    websocket.ping()
+                    pong_event = websocket.ping()
                     write_to_log("Sent WebSocket ping")
+                    pong_event.wait(10)
+
+                    if not pong_event.is_set():
+                        raise Exception("Ping timeout")
+                    write_to_log("Received WebSocket pong")
+
                     last_ping_time = time.time()
                 except Exception as e:
                     write_to_log(f"Ping failed: {e}")
