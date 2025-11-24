@@ -44,6 +44,7 @@ logger = logging.getLogger(__name__)
 
 # Thread to handle incoming messages
 def receiver(ws):
+    write_to_log("WS Receiver started")
     while True:
         try:
             raw = ws.recv()
@@ -53,6 +54,8 @@ def receiver(ws):
                 if server_id:
                     write_to_log(f"WS Reciever: ACK received - {server_id}")
                     # acks.put(server_id) 
+            elif msg.get("type") == "token_expired":
+                    write_to_log("WS Reciever: Token expired Please re-authenticate.")
             else:
                 pass
         except Exception as e:
@@ -205,13 +208,6 @@ def consumer(queue: Queue, websocket_url: str) -> None:
                     if not pong_event.is_set():
                         raise Exception("Ping timeout")
                     write_to_log("Received WebSocket pong")
-
-                    #also send a keepalive event to server
-                    ack_id = str(uuid.uuid4())
-                    keepalive_event = {'jwt': token, 'action': 'keepalive', 'ackId': ack_id}
-                    websocket.send(json.dumps(keepalive_event))
-
-                    write_to_log(f"Sent keepalive event, ID={ack_id}")
 
                     last_ping_time = time.time()
                 except Exception as e:
