@@ -206,6 +206,13 @@ def consumer(queue: Queue, websocket_url: str) -> None:
                         raise Exception("Ping timeout")
                     write_to_log("Received WebSocket pong")
 
+                    #also send a keepalive event to server
+                    ack_id = str(uuid.uuid4())
+                    keepalive_event = {'jwt': token, 'action': 'keepalive', 'ackId': ack_id}
+                    websocket.send(json.dumps(keepalive_event))
+
+                    write_to_log(f"Sent keepalive event, ID={ack_id}")
+
                     last_ping_time = time.time()
                 except Exception as e:
                     write_to_log(f"Ping failed: {e}")
