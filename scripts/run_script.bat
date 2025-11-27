@@ -23,28 +23,27 @@ set "WINDOW_TITLE=MeerbySoltReceiver"
 REM Python detection (prefer local user install, then Program Files)
 set "PYTHON_EXE="
 
-REM 1) User-local installs (Latest first) — pick first real python(.exe/.3.exe)
+REM 1) System-wide (C:\Program Files\Python*)
 for /f "delims=" %%D in ('
-  dir /b /ad "%LOCALAPPDATA%\Programs\Python\Python3*" 2^>nul ^| sort /r
+  dir /b /ad "C:\Program Files\Python*" 2^>nul ^| sort /r
 ') do (
-  for %%N in (python.exe python3.exe) do (
-    if not defined PYTHON_EXE if exist "%LOCALAPPDATA%\Programs\Python\%%D\%%N" (
-      set "PYTHON_EXE=%LOCALAPPDATA%\Programs\Python\%%D\%%N"
-    )
+  if not defined PYTHON_EXE if exist "C:\Program Files\%%D\python.exe" (
+    set "PYTHON_EXE=C:\Program Files\%%D\python.exe"
   )
 )
 
-REM 2) System-wide (C:\Program Files\Python*)
+REM 2) User-local installs (Latest first) — pick first real python(.exe/.3.exe)
 if not defined PYTHON_EXE (
   for /f "delims=" %%D in ('
-    dir /b /ad "C:\Program Files\Python*" 2^>nul ^| sort /r
+    dir /b /ad "%LOCALAPPDATA%\Programs\Python\Python3*" 2^>nul ^| sort /r
   ') do (
-    if not defined PYTHON_EXE if exist "C:\Program Files\%%D\python.exe" (
-      set "PYTHON_EXE=C:\Program Files\%%D\python.exe"
+    for %%N in (python.exe python3.exe) do (
+      if not defined PYTHON_EXE if exist "%LOCALAPPDATA%\Programs\Python\%%D\%%N" (
+        set "PYTHON_EXE=%LOCALAPPDATA%\Programs\Python\%%D\%%N"
+      )
     )
   )
 )
-
 
 REM 3) System-wide 32-bit (C:\Program Files (x86)\Python*)
 if not defined PYTHON_EXE (
