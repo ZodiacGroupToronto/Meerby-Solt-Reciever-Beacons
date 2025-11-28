@@ -41,3 +41,5 @@ You can manually force a run by double‑clicking the scheduled task in Task Sch
 - No `MeerbyUpdater` folder: task hasn’t executed yet—run it manually.
 - App not restarting: check `deploy.log` for pip/venv or git errors.
 - Credential / permission errors: re‑open task > General > ensure correct user and privileges.
+
+test autoupdate
