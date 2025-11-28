@@ -127,29 +127,32 @@ if exist "%RUN_PY%" (
 )
 
 REM --------------------------------------------------------------------------
-REM Write this batch's PID to PID file for external monitoring
+REM Start Python, capture its PID
 REM --------------------------------------------------------------------------
-for /f %%P in ('powershell -NoProfile -Command "(Get-Process -Id $PID).Parent.Id"') do (
-  set "BAT_PID=%%P"
+set "PY_PID="
+
+for /f %%P in ('
+  powershell -NoProfile -Command ^
+    "$p = Start-Process -FilePath ''%RUN_PY%'' -ArgumentList ''\"%SCRIPT_PATH%\" %SCRIPT_ARGS%'' -PassThru; $p.Id"
+') do (
+  set "PY_PID=%%P"
 )
 
-if defined BAT_PID (
-  echo [%DATE% %TIME%] Writing PID !BAT_PID! to "%PID_FILE%" >> "%LOG_FILE%"
-  > "%PID_FILE%" echo !BAT_PID!
-) else (
-  echo [%DATE% %TIME%] WARNING: Failed to determine batch PID; PID file not written. >> "%LOG_FILE%"
+if not defined PY_PID (
+  echo [%DATE% %TIME%] ERROR: Failed to start Python or capture PID. >> "%LOG_FILE%"
+  exit /b 1
 )
 
-REM Start the app attached to this task so Task Scheduler can control it
-echo [%DATE% %TIME%] Starting app (attached to Task Scheduler)... >> "%LOG_FILE%"
-echo Command: "%RUN_PY%" "%SCRIPT_PATH%" %SCRIPT_ARGS% >> "%LOG_FILE%"
+echo [%DATE% %TIME%] Python started with PID !PY_PID! >> "%LOG_FILE%"
+> "%PID_FILE%" echo !PY_PID!
 
-"%RUN_PY%" "%SCRIPT_PATH%" %SCRIPT_ARGS%
+REM Wait for the Python process to exit
+powershell -NoProfile -Command "Wait-Process -Id !PY_PID!"
 
 set "EXITCODE=%ERRORLEVEL%"
-echo [%DATE% %TIME%] App exited with code %EXITCODE%. >> "%LOG_FILE%"
+echo [%DATE% %TIME%] Python process !PY_PID! exited with code !EXITCODE!. >> "%LOG_FILE%"
 
-REM Remove PID file on clean exit
+REM Remove PID file on exit
 del "%PID_FILE%" >nul 2>&1
 
-exit /b %EXITCODE%
+exit /b !EXITCODE!
