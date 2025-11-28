@@ -2,11 +2,7 @@
 setlocal enabledelayedexpansion
 
 REM ==============================================================================
-REM  Meerby: Local launcher (no Git). Health-check + start/stop/restart.
-REM  Usage:
-REM     run_script.bat           -> ensure running (start if not)
-REM     run_script.bat restart   -> force restart
-REM     run_script.bat stop      -> stop if running
+REM  Meerby: Script launcher
 REM ==============================================================================
 
 REM -----------------------------
@@ -17,10 +13,10 @@ set "STATE_DIR=%USERPROFILE%\Desktop\MeerbyUpdater"
 set "LOG_FILE=%STATE_DIR%\deploy.log"
 set "PID_FILE=%REPO_DIR%\app.pid"
 
-REM App process settings
+REM App process settings (currently not used, kept for future)
 set "WINDOW_TITLE=MeerbySoltReceiver"
 
-REM Python detection (prefer local user install, then Program Files)
+REM Python detection (prefer Program Files, then local user, then PATH)
 set "PYTHON_EXE="
 
 REM 1) System-wide (C:\Program Files\Python*)
@@ -85,67 +81,11 @@ if not exist "%REPO_DIR%" (
 )
 echo [%DATE% %TIME%] --- launcher start --- >> "%LOG_FILE%"
 
-REM -----------------------------
-REM ARG PARSING
-REM -----------------------------
-if /i "%~1"=="restart" goto :DO_RESTART
-if /i "%~1"=="stop"    goto :DO_STOP
+REM Clear any stale PID file from previous runs
+del "%PID_FILE%" >nul 2>&1
 
-REM Default path: health check + ensure running
-goto :HEALTHCHECK_AND_START
-
-
-:DO_STOP
-call :STOP_APP
-exit /b %ERRORLEVEL%
-
-
-:DO_RESTART
-call :STOP_APP
-call :ENSURE_AND_START_APP
-exit /b %ERRORLEVEL%
-
-
-:HEALTHCHECK_AND_START
-REM Check PID file; if running, do nothing; else start it
-set "PID_IS_RUNNING="
-if exist "%PID_FILE%" (
-  set /p APP_PID=<"%PID_FILE%"
-  if defined APP_PID (
-    tasklist /nh /fi "PID eq !APP_PID!" | findstr "!APP_PID!" >nul && set "PID_IS_RUNNING=true"
-  )
-)
-
-if defined PID_IS_RUNNING (
-  echo [%DATE% %TIME%] Health check: App already running with PID !APP_PID!. >> "%LOG_FILE%"
-  exit /b 0
-) else (
-  echo [%DATE% %TIME%] App not running; attempting start. >> "%LOG_FILE%"
-  call :ENSURE_AND_START_APP
-  exit /b %ERRORLEVEL%
-)
-
-REM ==============================================================================
-REM FUNCTIONS
-REM ==============================================================================
-
-:STOP_APP
-echo [%DATE% %TIME%] Stopping existing app (PID from file)... >> "%LOG_FILE%"
-if exist "%PID_FILE%" (
-  set /p APP_PID=<"%PID_FILE%"
-  if defined APP_PID (
-    echo Attempting to kill PID !APP_PID!. >> "%LOG_FILE%"
-    taskkill /PID !APP_PID! /F /T >> "%LOG_FILE%" 2>&1
-    del /q "%PID_FILE%" >nul 2>&1
-  ) else (
-    echo PID file empty; nothing to kill. >> "%LOG_FILE%"
-  )
-) else (
-  echo PID file not found; nothing to kill. >> "%LOG_FILE%"
-)
-timeout /t 1 >nul 2>&1
-exit /b 0
-
+REM Default path: ensure and start
+goto :ENSURE_AND_START_APP
 
 :ENSURE_AND_START_APP
 REM Ensure venv, pip, requirements; then start app and record PID
@@ -186,32 +126,30 @@ if exist "%RUN_PY%" (
   exit /b 1
 )
 
-REM Start the app with PowerShell to capture PID cleanly
-set "POWERSHELL_CMD=powershell -NoProfile -Command "$p = Start-Process -FilePath '\""%RUN_PY%"\"' -ArgumentList '\""%SCRIPT_PATH%"\" %SCRIPT_ARGS%' -WindowStyle Hidden -PassThru; echo $p.Id""
-echo %POWERSHELL_CMD% >> "%LOG_FILE%"
-
-for /f %%i in ('%POWERSHELL_CMD%') do (
-  set "APP_PID=%%i"
+REM --------------------------------------------------------------------------
+REM Write this batch's PID to PID file for external monitoring
+REM --------------------------------------------------------------------------
+for /f %%P in ('powershell -NoProfile -Command "(Get-Process -Id $PID).Parent.Id"') do (
+  set "BAT_PID=%%P"
 )
 
-if defined APP_PID (
-  > "%PID_FILE%" echo %APP_PID%
-  echo [%DATE% %TIME%] App started with PID %APP_PID%. >> "%LOG_FILE%"
+if defined BAT_PID (
+  echo [%DATE% %TIME%] Writing PID !BAT_PID! to "%PID_FILE%" >> "%LOG_FILE%"
+  > "%PID_FILE%" echo !BAT_PID!
 ) else (
-  echo [%DATE% %TIME%] ERROR: Failed to retrieve PID after start. >> "%LOG_FILE%"
-  exit /b 1
+  echo [%DATE% %TIME%] WARNING: Failed to determine batch PID; PID file not written. >> "%LOG_FILE%"
 )
 
-timeout /t 2 >nul 2>&1
-if exist "%PID_FILE%" (
-  set /p APP_PID=<"%PID_FILE%"
-  tasklist /nh /fi "PID eq !APP_PID!" | findstr /r ".*" >nul && (
-    echo [%DATE% %TIME%] App process detected running. >> "%LOG_FILE%"
-  ) || (
-    echo [%DATE% %TIME%] WARNING: PID !APP_PID! not detected after start. >> "%LOG_FILE%"
-  )
-) else (
-  echo [%DATE% %TIME%] WARNING: PID file not found after start. >> "%LOG_FILE%"
-)
+REM Start the app attached to this task so Task Scheduler can control it
+echo [%DATE% %TIME%] Starting app (attached to Task Scheduler)... >> "%LOG_FILE%"
+echo Command: "%RUN_PY%" "%SCRIPT_PATH%" %SCRIPT_ARGS% >> "%LOG_FILE%"
 
-exit /b 0
+"%RUN_PY%" "%SCRIPT_PATH%" %SCRIPT_ARGS%
+
+set "EXITCODE=%ERRORLEVEL%"
+echo [%DATE% %TIME%] App exited with code %EXITCODE%. >> "%LOG_FILE%"
+
+REM Remove PID file on clean exit
+del "%PID_FILE%" >nul 2>&1
+
+exit /b %EXITCODE%
