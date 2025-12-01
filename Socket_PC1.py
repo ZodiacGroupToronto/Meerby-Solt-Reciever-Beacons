@@ -44,6 +44,7 @@ logger = logging.getLogger(__name__)
 
 # Thread to handle incoming messages
 def receiver(ws):
+    write_to_log("WS Receiver started")
     while True:
         try:
             raw = ws.recv()
@@ -53,6 +54,8 @@ def receiver(ws):
                 if server_id:
                     write_to_log(f"WS Reciever: ACK received - {server_id}")
                     # acks.put(server_id) 
+            elif msg.get("type") == "token_expired":
+                    write_to_log("WS Reciever: Token expired Please re-authenticate.")
             else:
                 pass
         except Exception as e:
@@ -198,8 +201,14 @@ def consumer(queue: Queue, websocket_url: str) -> None:
             # Send periodic pings to prevent keepalive timeouts
             if time.time() - last_ping_time > ping_interval:
                 try:
-                    websocket.ping()
+                    pong_event = websocket.ping()
                     write_to_log("Sent WebSocket ping")
+                    pong_event.wait(10)
+
+                    if not pong_event.is_set():
+                        raise Exception("Ping timeout")
+                    write_to_log("Received WebSocket pong")
+
                     last_ping_time = time.time()
                 except Exception as e:
                     write_to_log(f"Ping failed: {e}")
@@ -276,7 +285,8 @@ def consumer(queue: Queue, websocket_url: str) -> None:
 
 def register_receiver(websocket, token: str) -> None:
     """Send receiver registration message."""
-    message = {'jwt': token, 'action': 'receiver_registration'}
+    label = os.getenv('RECEIVER_NAME', 'Receiver')
+    message = {'jwt': token, 'action': 'receiver_registration', 'label': label}
     websocket.send(json.dumps(message))
     write_to_log("Receiver registered")
 
