@@ -40,7 +40,7 @@
   <Actions Context="Author">
   <Exec>
     <Command>%SystemRoot%\System32\cmd.exe</Command>
-    <Arguments>/d /s /c ""C:\Users\{{UserName}}\Meerby-Solt-Reciever-Beacons\scripts\run_script.bat""</Arguments>
+    <Arguments>/d /s /c ""C:\Users\{{UserName}}\Meerby-Solt-Reciever-Beacons\scripts\stop_and_start.bat""</Arguments>
     <WorkingDirectory>C:\Users\{{UserName}}\Meerby-Solt-Reciever-Beacons\scripts</WorkingDirectory>
   </Exec>
 </Actions>
