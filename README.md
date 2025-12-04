@@ -42,4 +42,4 @@ You can manually force a run by double‑clicking the scheduled task in Task Sch
 - App not restarting: check `deploy.log` for pip/venv or git errors.
 - Credential / permission errors: re‑open task > General > ensure correct user and privileges.cd
 
-- auto update 2
+- auto update 3
