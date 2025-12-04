@@ -12,9 +12,10 @@ REM ============================================================================
 @REM REM -----------------------------
 @REM set "REPO_DIR=%USERPROFILE%\Meerby-Solt-Reciever-Beacons"
 @REM set "PID_FILE=%REPO_DIR%\app.pid"
-set "STOP_SCRIPT=%REPO_DIR%\scripts\stop_task.bat"
-set "START_SCRIPT=%REPO_DIR%\scripts\start_task.bat"
-
+@REM set "STOP_SCRIPT=%REPO_DIR%\scripts\stop_task.bat"
+@REM set "START_SCRIPT=%REPO_DIR%\scripts\start_task.bat"
+set "STOP_SCRIPT=%~dp0stop_task.bat"
+set "START_SCRIPT=%~dp0start_task.bat"
 call "%STOP_SCRIPT%"
 call "%START_SCRIPT%"
 @REM REM Where to store state/logs OUTSIDE the repo so they survive resets

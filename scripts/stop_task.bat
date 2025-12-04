@@ -1,4 +1,5 @@
 @echo off
+
 setlocal enabledelayedexpansion
 
 REM ===========================================
@@ -8,6 +9,7 @@ REM ===========================================
 REM -----------------------------
 REM CONFIG — EDIT ME
 REM -----------------------------
+
 set "REPO_DIR=%USERPROFILE%\Meerby-Solt-Reciever-Beacons"
 set "PID_FILE=%REPO_DIR%\app.pid"
 
