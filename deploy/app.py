@@ -51,10 +51,6 @@ def deploy():
 
     log_deployment_event("Starting update...")
     
-    #restart tenants and shutdown in a separate thread to avoid blocking
-
-    # shutdown_server()
-
     return jsonify({"status": "Repository updated"}), 200
 
 def shutdown_server():
