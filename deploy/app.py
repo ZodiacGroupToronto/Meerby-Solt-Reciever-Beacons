@@ -68,4 +68,4 @@ def log_deployment_event(message):
 
 if __name__ == '__main__':
     log_deployment_event("Starting deployment server...")
-    app.run(host='0.0.0.0', port=os.getenv("PORT", 9000))
+    app.run(host='0.0.0.0', port=os.getenv("PORT", 9002))
