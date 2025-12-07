@@ -49,7 +49,33 @@ def deploy():
         log_deployment_event(f"Git pull failed with return code {result.returncode}.")
         return jsonify({"status": "Git pull failed", "return_code": result.returncode}), 500
 
+    # After a successful pull, optionally create and move a 7z archive.
+    # This runs the script `deploy/scripts/pack_and_move.sh` when the
+    # environment variable `ARCHIVE_PASS` is set. The script must be
+    # executable and `7z` must be installed on the system.
+    archive_script = os.path.join(os.path.dirname(__file__), "scripts", "pack_and_move.sh")
+    if os.path.exists(archive_script):
+        archive_pass = os.getenv("ARCHIVE_PASS")
+        if archive_pass:
+            log_deployment_event("Running pack_and_move.sh to create encrypted archive...")
+            env = os.environ.copy()
+            env["ARCHIVE_PASS"] = archive_pass
+            try:
+                r = subprocess.run(["/bin/bash", archive_script], stdout=open("deploy.log", "a"), stderr=subprocess.STDOUT, env=env)
+                if r.returncode != 0:
+                    log_deployment_event(f"pack_and_move.sh failed with return code {r.returncode}")
+                else:
+                    log_deployment_event("pack_and_move.sh completed successfully.")
+            except Exception as e:
+                log_deployment_event(f"pack_and_move.sh execution error: {e}")
+        else:
+            log_deployment_event("ARCHIVE_PASS not set; skipping pack_and_move.sh.")
+    else:
+        log_deployment_event(f"Archive script not found at {archive_script}; skipping archive.")
+
     log_deployment_event("Starting update...")
+    
+    shutdown_server()
     
     return jsonify({"status": "Repository updated"}), 200
 
