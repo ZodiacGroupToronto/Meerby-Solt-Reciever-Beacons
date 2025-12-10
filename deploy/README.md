@@ -1,378 +1,210 @@
-# Solt Script Deployment Server
+# Solt Receiver - Deployment Server (Linux/systemd)
 
-A lightweight Flask-based webhook server that handles automated deployments from GitHub for the Meerby Laravel multi-tenant application.
+This repository folder contains a small Flask webhook server that automates deployments for the Meerby Laravel multi-tenant system. The server verifies GitHub HMAC signatures, pulls updated code, triggers tenant restarts, and then shuts down so a process manager (systemd) can restart it with the new code.
 
-## Overview
+**This README** explains how to install, configure and run the deployment server on a Linux host using `systemd`, how to configure the GitHub webhook, how the restart/self-update flow works, and how to test and troubleshoot.
 
-This deployment server listens for GitHub webhook events and automatically:
-1. Pulls the latest code from the `run-script` branch
-2. Gracefully restarts itself to apply any updates to the deployment server
+**Important:** The service intentionally shuts itself down after handling a deployment to allow the updated code to be loaded on restart. Use `systemd` with a restart policy (for example `Restart=always`).
 
-**⚠️ Important:** When a deployment is triggered, the server will shut itself down after returning a 200 response. This allows the deployment server itself to be updated. We recommend using a service manager (like systemd) to automatically restart it.
+**Files of interest:**
+- `app.py`: Flask webhook server and deployment logic.
+- `startServer.sh`: helper that creates a venv and starts the server.
+- `requirements.txt`: Python dependencies.
+- `.env.example`: environment variables template.
+- `scripts/`: helper bash scripts (e.g., `pack_and_move.sh`).
+- `utils/HMAC.py`: HMAC helper used to verify GitHub signatures.
 
-## Features
+**Assumptions:**
+- You will run this on a Linux server (Ubuntu/Debian/CentOS compatible) with Python 3.8+ installed.
+- You will use `systemd` to manage the service.
+- The deployment repository is present on the same host and `git` is configured with appropriate credentials (SSH key or credential helper).
 
-- 🔐 HMAC signature verification for GitHub webhooks
-- 📦 Automatic git pull from Production branch
-- 🔄 Multi-tenant Docker container restart
-- 🔁 Self-updating capability
-- 📝 Detailed deployment logging
-- 📧 Email reporting for deployment status
+**Security note:** Use HTTPS and a firewall. Keep `HMAC_SECRET` private.
 
-## Prerequisites
+**Quick overview of the flow:**
+- GitHub push to the Production branch → GitHub sends webhook to `/deploy` → Server verifies HMAC → `git pull` runs → local update script (e.g. `scripts/pack_and_move.sh`) runs to copy/build files into place → Server responds 200 and exits → `systemd` restarts server.
 
-- Python 3.7+
+**Minimum prerequisites**
+- Python 3.8+ (3.7 may work but newer is recommended)
 - Git
-- Docker and Docker Compose
-- Access to the repository
-- SMTP server for email notifications (optional)
+- systemd
 
-## Installation
+**Environment variables (in `.env`)**
+- `HMAC_SECRET`: GitHub webhook secret (required for validation)
+- `PORT`: port to listen on (default `9002`)
+- Additional email/smtp variables may exist if email reporting is configured by your scripts.
 
-1. **Clone or navigate to the deploy directory:**
-   ```bash
-   cd /home/pc-scripts/Meerby-Solt-Receiver-Beacons/deploy
-   ```
+**1) Install & Configure**
 
-2. **Copy the environment template:**
-   ```bash
-   cp .env.example .env
-   ```
+1. Put the deployment folder on the server, for example `/opt/meerby/solt-deploy` or `/home/deploy/solt-deploy`.
 
-3. **Configure your environment:**
-   Edit `.env` and set:
-   ```bash
-   HMAC_SECRET=your_github_webhook_secret
-   PORT=9002
-   ```
-   
-   > 💡 The HMAC secret should match the secret configured in your GitHub webhook settings.
+2. Copy the example env and edit it:
 
-4. **Make the startup script executable:**
-   ```bash
-   chmod +x startServer.sh
-   ```
-
-## Quick Start
-
-### Manual Start
 ```bash
-./startServer.sh
+cd /opt/meerby/solt-deploy
+cp .env.example .env
+# edit .env and set HMAC_SECRET and PORT (and any SMTP settings)
+nano .env
 ```
 
-The server will:
-- Create a Python virtual environment
-- Install dependencies from `requirements.txt`
-- Start the Flask server on the configured port (default: 9002)
+3. Make helper scripts executable:
 
-### Recommended: Setup as System Service
-
-For production use, create a systemd service to automatically start and restart the deployment server.
-
-**Create the service file:**
 ```bash
-sudo nano /etc/systemd/system/solt-receiver-deploy.service
+chmod +x startServer.sh
+chmod +x scripts/*.sh
 ```
 
-**Add the following configuration:**
+4. Review `startServer.sh` to ensure it creates the virtualenv where you want it. The script provided in the repo will typically:
+- create `venv/` inside the `deploy` folder
+- `pip install -r requirements.txt`
+- and run `python app.py` (or `gunicorn` if configured)
+
+If you prefer to manage the venv manually:
+
+```bash
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+```
+
+**2) Create a `systemd` service**
+
+Create `/etc/systemd/system/solt-receiver-deploy.service` with contents similar to the example below. Replace paths and `User` with your system values (use an unprivileged service user when possible):
+
 ```ini
 [Unit]
-Description=Meerby Laravel Deployment Server
-After=network.target docker.service
-Requires=docker.service
+Description=Meerby Solt Receiver Deployment Server
 
 [Service]
 Type=simple
-User=your_username
-WorkingDirectory=/path/to/Meerby Laravel/deploy
-ExecStart=/path/to/Meerby Laravel/deploy/startServer.sh
+User=root
+WorkingDirectory=/home/dcxs/pc-scripts/Meerby-Solt-Reciever-Beacons/deploy
+# Ensure ExecStart points to your start script or to the venv python run command
+ExecStart=/home/dcxs/pc-scripts/Meerby-Solt-Reciever-Beacons/deploy/startServer.sh
 Restart=always
 RestartSec=5
-StandardOutput=append:/path/to/Meerby Laravel/deploy/deploy.log
-StandardError=append:/path/to/Meerby Laravel/deploy/deploy.log
-
-# Environment
+# Send stdout/stderr to a log file (rotate with logrotate) or rely on journalctl
+StandardOutput=append:/home/dcxs/pc-scripts/Meerby-Solt-Reciever-Beacons/deploy/deploy.log
+StandardError=append:/home/dcxs/pc-scripts/Meerby-Solt-Reciever-Beacons/deploy/deploy.log
 Environment="PATH=/usr/local/bin:/usr/bin:/bin"
 
 [Install]
 WantedBy=multi-user.target
 ```
 
-**Enable and start the service:**
+Commands to enable and start the service:
+
 ```bash
-# Reload systemd to recognize the new service
+# reload systemd after adding the unit file
 sudo systemctl daemon-reload
-
-# Enable the service to start on boot
 sudo systemctl enable solt-receiver-deploy.service
-
-# Start the service
 sudo systemctl start solt-receiver-deploy.service
-
-# Check status
 sudo systemctl status solt-receiver-deploy.service
 ```
 
-**Useful service commands:**
-```bash
-# View logs
-sudo journalctl -u solt-receiver-deploy.service -f
+If you prefer to run the `python` process directly without `startServer.sh`, change `ExecStart` to:
 
-# Restart the service
-sudo systemctl restart solt-receiver-deploy.service
-
-# Stop the service
-sudo systemctl stop solt-receiver-deploy.service
+```ini
+ExecStart=/opt/meerby/solt-deploy/venv/bin/python /opt/meerby/solt-deploy/app.py
 ```
 
-## GitHub Webhook Configuration
+**3) GitHub webhook configuration**
 
-1. Go to your GitHub repository settings
-2. Navigate to **Settings → Webhooks → Add webhook**
-3. Configure:
-   - **Payload URL:** `http://your-server:9002/deploy`
-   - **Content type:** `application/json`
-   - **Secret:** Your HMAC_SECRET from `.env`
-   - **Events:** Select "Just the push event"
-   - **Active:** ✓ Checked
+In GitHub repository settings → Webhooks → Add webhook:
+- Payload URL: `http://YOUR_SERVER:9002/deploy` (use HTTPS behind a reverse proxy in production)
+- Content type: `application/json`
+- Secret: value of `HMAC_SECRET` set in `.env`
+- Events: choose `Push` (or select only the Production branch if GitHub supports it in your repo)
 
-## API Endpoints
+The server expects the header `X-Hub-Signature-256` (HMAC-SHA256). The repo includes `utils/HMAC.py` to validate signatures.
 
-### `GET /`
-Health check endpoint.
-
-**Response:**
-```
-Meerby Laravel Deployment server is running.
-```
-
-### `POST /deploy`
-Webhook endpoint for GitHub push events.
-
-**Headers Required:**
-- `X-Hub-Signature-256`: GitHub HMAC signature
-
-**Behavior:**
-1. Verifies the webhook signature (if enabled)
-2. Checks if the push is to the `Production` branch
-3. Pulls latest code with `git pull origin Production`
-4. Triggers `restartAllTenants.sh` in background
-5. Returns 200 response
-6. Shuts down server after 2 seconds (allowing service manager to restart it)
-
-**Response:**
-```json
-{
-  "status": "Started restarting all tenants"
-}
-```
-
-## Deployment Scripts
-
-The `scripts/` directory contains utility scripts that can be used individually or are called automatically during deployment:
-
-### `restartAllTenants.sh`
-Restarts all tenant Docker containers in the workspace.
-
-**Usage:**
-```bash
-cd deploy
-./scripts/restartAllTenants.sh [email_report]
-```
-
-**Parameters:**
-- `email_report`: Optional. Set to `"true"` to email a restart report to developers
-
-**Examples:**
-```bash
-# Basic restart without email
-./scripts/restartAllTenants.sh
-
-# Restart with email report
-./scripts/restartAllTenants.sh true
-```
-
-**Behavior:**
-- Scans parent directory for all `*.tenant` folders
-- Skips `example.tenant`
-- Stops and restarts each tenant's Docker containers
-- Continues processing even if individual tenants fail
-- Optionally sends an email report with stop/start status for each tenant
-
-**Note:** Requires bash 3.2+ (compatible with macOS default bash)
-
-### `startTenant.sh`
-Starts a specific tenant's Docker containers.
-
-**Usage:**
-```bash
-./scripts/startTenant.sh <tenant_dir>
-```
-
-**Example:**
-```bash
-./scripts/startTenant.sh ../dev.dcxs.cloud.tenant
-```
-
-**Behavior:**
-- Converts tenant directory name to Docker Compose project name
-- Starts containers using `docker-compose up -d`
-- Uses tenant-specific `.env` file from the tenant directory
-
-### `stopTenant.sh`
-Stops a specific tenant's Docker containers.
-
-**Usage:**
-```bash
-./scripts/stopTenant.sh <tenant_dir>
-```
-
-**Example:**
-```bash
-./scripts/stopTenant.sh ../ct457.meerby.com.tenant
-```
-
-**Behavior:**
-- Converts tenant directory name to Docker Compose project name
-- Gracefully stops all containers with `docker-compose down`
-
-### Common Library (`libs/common.sh`)
-Shared utility functions used by the scripts:
-
-- `tenantDirToProjectName()`: Converts tenant directory paths to Docker project names
-  - Example: `./example.tenant` → `example_tenant`
-
-### Email Library (`libs/emailDevs.sh`)
-Email notification utility for sending deployment reports to developers.
-
-**Requirements:**
-- Configured SMTP settings in environment
-- Email addresses configured for development team
-
-## Logging
-
-All deployment events are logged to `deploy.log` with timestamps:
+Example: local test of signature generation (generate header for `curl` tests):
 
 ```bash
-# View deployment logs
-tail -f deploy.log
-
-# View recent deployments
-tail -n 100 deploy.log
+# prepare a small JSON payload file payload.json
+PAYLOAD_FILE=payload.json
+SECRET="your_secret_here"
+SIG=$(python3 -c "import hmac,hashlib,sys,json; p=open('$PAYLOAD_FILE','rb').read(); print('sha256=' + hmac.new(b'$SECRET', p, hashlib.sha256).hexdigest())")
+curl -H "X-Hub-Signature-256: $SIG" -H "Content-Type: application/json" --data-binary @$PAYLOAD_FILE http://localhost:9002/deploy
 ```
 
-**Log format:**
-```
-[2025-10-28 14:30:45] Deployment request received.
-[2025-10-28 14:30:45] 📦 Received deployment request: {...}
-[2025-10-28 14:30:45] ⬇️ Pulling latest changes...
-[2025-10-28 14:30:47] 🚀 Starting deployment...
-[2025-10-28 14:30:47] ⚰️ Shutting down deployment server...
-```
+**4) How update & self-reload works**
 
-## How It Works
+- The webhook handler performs `git pull origin <branch>` (branch is configurable in `app.py` or your environment) to fetch new code.
+- After the pull completes, the handler may run a local script from `scripts/` to move/build/copy updated files into the target folder. The repository includes `scripts/pack_and_move.sh` as an example.
+- After returning a 200 response, the server starts a short timer (2s) and then exits (SIGTERM). `systemd` with `Restart=always` restarts the service, loading the updated code.
 
-### Deployment Flow
+This design allows the deployment server to update itself and optionally run any custom commands needed to place code where your production system expects it.
 
-1. **GitHub Push** → Production branch updated
-2. **Webhook Triggered** → GitHub sends POST to `/deploy`
-3. **Signature Verified** → HMAC validation
-4. **Git Pull** → Latest code fetched
-5. **Tenants Restart** → All Docker containers restarted in background
-6. **Response Sent** → 200 OK returned to GitHub
-7. **Server Shutdown** → Deployment server kills itself after 2 seconds
-8. **Auto Restart** → Service manager (systemd) restarts the server with new code
+**5) Logging & monitoring**
 
-### Self-Updating Mechanism
+- Service logs via `journalctl -u solt-receiver-deploy.service -f`.
+- If using `StandardOutput=append:/path/deploy.log` in the unit file, monitor that file with `tail -f /opt/meerby/solt-deploy/deploy.log`.
+- Ensure `deploy.log` is writable by the service user and consider log rotation (`logrotate`).
 
-The server's self-update works through these steps:
+**6) Testing & troubleshooting**
 
-1. After responding to the webhook, a background thread is started
-2. The thread waits 2 seconds (allowing the response to complete)
-3. The server sends itself a SIGTERM signal
-4. The systemd service (with `Restart=always`) detects the shutdown
-5. Systemd automatically restarts the server with the updated code
+- Check Python/venv and dependencies:
 
-This ensures the deployment server itself can be updated through the same deployment process.
-
-## Troubleshooting
-
-### Server won't start
 ```bash
-# Check Python version
 python3 --version
-
-# Manually create venv and test
-python3 -m venv venv
+cd /opt/meerby/solt-deploy
 source venv/bin/activate
 pip install -r requirements.txt
-python3 app.py
+python app.py  # runs in foreground for quick debug
 ```
 
-### Deployments not triggering
-1. Check GitHub webhook delivery status in GitHub settings
-2. Verify HMAC_SECRET matches GitHub configuration
-3. Check firewall/port accessibility
-4. Review `deploy.log` for errors
-
-### Tenants not restarting
-```bash
-# Test tenant scripts manually
-./scripts/restartAllTenants.sh
-
-# Check Docker status
-docker ps -a
-
-# Test individual tenant
-./scripts/stopTenant.sh ../example.tenant
-./scripts/startTenant.sh ../example.tenant
-```
-
-### Service not restarting
-```bash
-# Check service status
-sudo systemctl status meerby-deploy.service
-
-# View service logs
-sudo journalctl -u meerby-deploy.service -n 50
-
-# Verify Restart policy
-sudo systemctl show meerby-deploy.service | grep Restart
-```
-
-### Bash compatibility issues (macOS)
-The scripts are compatible with bash 3.2+ (default on macOS). If you encounter bash-related errors:
+- Check webhook reception:
 
 ```bash
-# Check bash version
-bash --version
-
-# Ensure scripts are executable
-chmod +x scripts/*.sh
-chmod +x scripts/libs/*.sh
+# from a remote machine (or GitHub), send a signed payload as shown above
+curl -v -H "X-Hub-Signature-256: <signature>" -H "Content-Type: application/json" -d '{"ref":"refs/heads/Production"}' http://your-server:9002/deploy
 ```
 
-## Security Considerations
+- Check `deploy.log` and `journalctl` for errors.
 
-- ✅ Always use HMAC signature verification in production
-- ✅ Restrict webhook access with firewall rules
-- ✅ Use HTTPS for webhook endpoints (configure reverse proxy)
-- ✅ Limit server user permissions
-- ✅ Keep the HMAC_SECRET secure (use Bitwarden note: Meerby-Deployment-HMAC-Secret)
-- ✅ Secure email credentials if using email reporting feature
+Common checks:
+- `sudo systemctl status solt-receiver-deploy.service`
+- `sudo journalctl -u solt-receiver-deploy.service -n 200 --no-pager`
+- Confirm `HMAC_SECRET` matches GitHub webhook secret.
+- Confirm the server user has permission to run `git pull` and to run any post-deploy scripts (e.g., `scripts/pack_and_move.sh`).
 
-## Dependencies
+**7) Permissions & security**
 
-See `requirements.txt` for full list:
-- Flask 3.1.2 - Web framework
-- python-dotenv 1.2.1 - Environment configuration
-- gunicorn 23.0.0 - Production WSGI server (optional)
+- Use a dedicated `deploy` user with limited permissions. The user must have read/write access to the deployment repo and ability to run the tenant scripts.
+- If restart scripts call `docker-compose`, ensure the `deploy` user is in the `docker` group or use a controlled sudoers rule (limit sudo to the scripts needed).
+- Serve the webhook over HTTPS (use a reverse proxy like nginx with TLS). Restrict inbound firewall rules to GitHub IPs where possible.
 
-## License
+**8) Example `systemd` workflow commands**
 
-Part of the Meerby Laravel multi-tenant application system.
+```bash
+# Reload units after edits
+sudo systemctl daemon-reload
+
+# Start/stop/restart
+sudo systemctl start solt-receiver-deploy.service
+sudo systemctl stop solt-receiver-deploy.service
+sudo systemctl restart solt-receiver-deploy.service
+
+# Watch logs
+sudo journalctl -u solt-receiver-deploy.service -f
+```
+
+**9) Example troubleshooting scenarios**
+
+- If `git pull` fails: inspect `deploy.log` or journal -> likely missing SSH key or permissions. Ensure the `deploy` user has the appropriate SSH key or credential helper.
+- If post-deploy actions fail: run `./scripts/pack_and_move.sh` or other deploy scripts manually to see error output and verify paths/permissions.
+- If webhook returns 401/403: verify signature header name and `HMAC_SECRET`.
+
+**10) Optional: run behind Gunicorn + reverse proxy**
+
+For higher concurrency or production hardening, run the Flask app under `gunicorn` and place nginx/nginx-proxy in front for TLS termination and request buffering. In that case, `ExecStart` should point to the gunicorn command using the `venv` python.
 
 ---
 
-**Maintained by:** Zodiac Group Toronto  
-**Repository:** [Meerby-Rest-API](https://github.com/ZodiacGroupToronto/Meerby-Rest-API)
+If you want, I can:
+- add a `systemd` unit file template in this repo (e.g., `deploy/solt-receiver-deploy.service`),
+- add a sample `logrotate` config for `deploy.log`, or
+- create a small test script to exercise the webhook locally.
+
+Tell me which of these you'd like me to add next.
