@@ -13,30 +13,75 @@ import os
 from dotenv import load_dotenv
 import uuid
 import threading
-
+import win32crypt
+from logging.handlers import TimedRotatingFileHandler
 load_dotenv()
 
-#Check env variables
-required_env_vars = ['PASSPHRASE', 'STORE_BASE_URL', 'WS_URL']
-missing_vars = [var for var in required_env_vars if var not in os.environ]
-if missing_vars:
-    raise EnvironmentError(f"Missing required environment variables: {', '.join(missing_vars)}")
+# #Check env variables
+# required_env_vars = ['PASSPHRASE', 'STORE_BASE_URL', 'WS_URL']
+# missing_vars = [var for var in required_env_vars if var not in os.environ]
+# if missing_vars:
+#     raise EnvironmentError(f"Missing required environment variables: {', '.join(missing_vars)}")
 
 
 # Configure logging
+LOG_DIR = r"C:\ProgramData\MeerbyPCScript\logs"
+LOG_FILE = os.path.join(LOG_DIR, "app.log")
+
+os.makedirs(LOG_DIR, exist_ok=True)
+
+file_handler = TimedRotatingFileHandler(
+    LOG_FILE,
+    when="midnight",     # rotate daily
+    interval=1,
+    backupCount=30       # keep 30 days
+)
+
+formatter = logging.Formatter(
+    '%(asctime)s - %(levelname)s - %(processName)s - %(message)s'
+)
+
+file_handler.setFormatter(formatter)
+
+console_handler = logging.StreamHandler()
+console_handler.setFormatter(formatter)
+
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(processName)s - %(message)s',
-    handlers=[
-        logging.FileHandler(r"C:\Users\User\Desktop\pcLogs.txt"),
-        logging.StreamHandler()
-    ]
+    handlers=[file_handler, console_handler]
 )
+
 logger = logging.getLogger(__name__)
 
 
 # ACK tracking
 acks = Queue()
+
+SECRETS_PATH = r"C:\ProgramData\MeerbyPCScript\secrets\secrets.bin"
+
+_config_cache = None
+
+def load_config():
+    global _config_cache
+
+    if _config_cache is None:
+        with open(SECRETS_PATH, "rb") as f:
+            encrypted = f.read()
+
+        decrypted = win32crypt.CryptUnprotectData(encrypted, None, None, None, 0)[1]
+        _config_cache = json.loads(decrypted.decode())
+        required_env_vars = ['PASSPHRASE', 'STORE_BASE_URL', 'WS_URL', 'SOLT_RECIVER_SERIAL_ID']
+        missing_vars = [var for var in required_env_vars if var not in _config_cache]
+        if missing_vars:
+            write_to_log(f"Error: Missing required environment variables in secrets file: {', '.join(missing_vars)}")
+            raise EnvironmentError(f"Missing required environment variables: {', '.join(missing_vars)}")
+
+    return _config_cache
+
+
+def get_credentials(name: str):
+    return load_config().get(name)
+
 
 # Thread to handle incoming messages
 def receiver(ws):
@@ -60,8 +105,8 @@ def write_to_log(message: str) -> None:
 
 def get_reciever_token() -> str:
     #send to endpoint, get token
-    password = os.getenv('PASSPHRASE')
-    login_url = os.getenv('STORE_BASE_URL') + '/wp-json/api/os_authorization'
+    password = get_credentials('PASSPHRASE')
+    login_url = get_credentials('STORE_BASE_URL') + '/wp-json/api/os_authorization'
     payload = {'password': password}
     
     while True:
@@ -86,7 +131,7 @@ def get_reciever_serial_port() -> serial.Serial:
         write_to_log("List of serial Numbers found:")
         for port in ports:
             write_to_log(f"---- {port.serial_number}")
-            if port.serial_number == os.getenv('SOLT_RECIVER_SERIAL_ID'):
+            if port.serial_number == get_credentials('SOLT_RECIVER_SERIAL_ID'):
                 comPort = port.device
                 write_to_log(f"Receiver found on {comPort}")
         if comPort == "":
@@ -105,7 +150,7 @@ def producer(queue: Queue, token: str) -> None:
     write_to_log(f"Producer: Queue created")
 
     """In TEST_MODE generate fake beacon presses; otherwise read from serial."""
-    test_mode = os.getenv("TEST_MODE", "0") == "1"
+    test_mode = get_credentials("TEST_MODE") == "1"
 
     while True:
         try:
@@ -200,7 +245,7 @@ def consumer(queue: Queue, websocket_url: str) -> None:
         event = None
         try:
             event = queue.get(timeout=1)  # Non-blocking with timeout
-            print(f"Consumer: processing event {event}")
+            print(f"Consumer: processing event {event['action']}")
             print(f"receiver_is_connected: {receiver_is_connected} ")
         except Empty:
             continue
@@ -257,7 +302,7 @@ def register_receiver(websocket, token: str) -> None:
     write_to_log("Receiver registered")
 
 def main():
-    websocket_url = os.getenv('WS_URL')
+    websocket_url = get_credentials('WS_URL')
     token = get_reciever_token()
     
     # Create shared queue
