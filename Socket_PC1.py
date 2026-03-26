@@ -61,21 +61,32 @@ SECRETS_PATH = r"C:\ProgramData\MeerbyPCScript\secrets\secrets.bin"
 
 _config_cache = None
 
-def load_config():
+def load_config() -> dict:
     global _config_cache
-
+ 
     if _config_cache is None:
+        if not os.path.isfile(SECRETS_PATH):
+            raise FileNotFoundError(
+                f"secrets.bin not found at {SECRETS_PATH}. "
+                "Run setup.ps1 (which calls encrypt_secrets.py) to create it."
+            )
+ 
         with open(SECRETS_PATH, "rb") as f:
             encrypted = f.read()
-
-        decrypted = win32crypt.CryptUnprotectData(encrypted, None, None, None, 0)[1]
-        _config_cache = json.loads(decrypted.decode())
-        required_env_vars = ['PASSPHRASE', 'STORE_BASE_URL', 'WS_URL', 'SOLT_RECIVER_SERIAL_ID']
-        missing_vars = [var for var in required_env_vars if var not in _config_cache]
-        if missing_vars:
-            write_to_log(f"Error: Missing required environment variables in secrets file: {', '.join(missing_vars)}")
-            raise EnvironmentError(f"Missing required environment variables: {', '.join(missing_vars)}")
-
+ 
+        # CryptUnprotectData returns (description, plaintext_bytes)
+        _, decrypted_bytes = win32crypt.CryptUnprotectData(
+            encrypted, None, None, None, 0
+        )
+        _config_cache = json.loads(decrypted_bytes.decode("utf-8"))
+ 
+        missing = [k for k in REQUIRED_KEYS if k not in _config_cache]
+        if missing:
+            raise KeyError(
+                f"secrets.bin is missing required keys: {missing}. "
+                "Re-run encrypt_secrets.py with all required values."
+            )
+ 
     return _config_cache
 
 
